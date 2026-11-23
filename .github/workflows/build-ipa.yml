@@ -1,0 +1,69 @@
+name: Build unsigned iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - name: Check out the source
+        uses: actions/checkout@v4
+
+      - name: Xcode version
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Validate project metadata
+        run: |
+          plutil -lint HTMLViewer/Info.plist
+          test -f project.yml
+          test -f HTMLViewer/Assets.xcassets/AppIcon.appiconset/AppIcon.png
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate the Xcode project
+        run: xcodegen generate --spec project.yml
+
+      - name: Build device app without signing
+        run: |
+          set -eo pipefail
+          xcodebuild build \
+            -project HTMLViewer.xcodeproj \
+            -scheme HTMLViewer \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$PWD/build/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            | tee "$PWD/build.log"
+
+      - name: Package Payload as unsigned IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH="build/DerivedData/Build/Products/Release-iphoneos/HTMLViewer.app"
+          test -d "$APP_PATH"
+          mkdir -p build/ipa/Payload
+          ditto "$APP_PATH" build/ipa/Payload/HTMLViewer.app
+          (cd build/ipa && /usr/bin/zip -qry ../HTMLViewer-unsigned.ipa Payload)
+          unzip -l build/HTMLViewer-unsigned.ipa | head -40
+          test -s build/HTMLViewer-unsigned.ipa
+
+      - name: Upload IPA to Actions artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: HTMLViewer-unsigned-IPA
+          path: build/HTMLViewer-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,100 @@
+# HTML Viewer for iOS — unsigned IPA on GitHub Actions
+
+A native SwiftUI **local HTML / website viewer** built around WKWebView. Requires **no local Mac** to compile: GitHub Actions runs Xcode on a GitHub-hosted macOS runner and produces an **unsigned IPA**.
+
+## Features
+
+- Import multiple `.html`/`.htm` files, ZIP archives, or complete website folders with relative assets.
+- Persist imported files in **Files > On My iPhone > HTML Viewer > HTML Sites** (subject to iOS Files app visibility).
+- Each import is an independent site, with a stable localhost origin/port and persistent `localStorage`, IndexedDB, cookies, and WebKit cache.
+- Standard top toolbar, **No top bar**, or **Fullscreen** (no system status bar). The latter two keep a floating ellipsis menu for exit/controls.
+- Per-site **Automatic / Portrait / Landscape** preference; rotate dynamically when the OS permits.
+- Safari/WebKit web runtime: CSS, JS, ES modules, canvas, WebGL, WebAssembly, fetch, WebSockets, multimedia and online requests.
+- WebGPU is offered **if the OS, hardware, and WKWebView expose `navigator.gpu`**. No private browser flags are used.
+- Built-in loopback HTTP server handles HTTP GET/HEAD, range requests, MIME types including `.wasm`, and blocks path traversal/symlink escapes.
+- No telemetry, custom JavaScript engines, or webpage injection.
+
+> **Network note:** Ordinary HTTPS, HTTP and WebSocket connections made by imported HTML are subject to WebKit's security, permissions, cross-origin policies and iOS network restrictions. `localhost` inside a viewed page is the **phone**, not your computer. Use your computer's reachable LAN address for servers on the computer.
+
+## Build an IPA on GitHub without owning a Mac
+
+1. Download and extract the entire project ZIP. Keep the **hidden `.github/workflows/build-ipa.yml`** file and `project.yml` at the repository root.
+2. On [github.com/new](https://github.com/new), create a repository (for example `HTMLViewer-iOS`).
+3. On Windows, install [GitHub Desktop](https://desktop.github.com/) if needed. Clone the empty repository, copy the **contents** of this project into the cloned repository folder (including `.github`), commit, then **Push origin**.
+   - Alternative terminal commands, from the extracted project root:
+     ```bash
+     git init
+     git add .
+     git commit -m "Initial HTML Viewer app"
+     git branch -M main
+     git remote add origin https://github.com/YOUR_USERNAME/HTMLViewer-iOS.git
+     git push -u origin main
+     ```
+4. Open the GitHub repository, select **Actions** > **Build unsigned iOS IPA** > **Run workflow** (or use the automatic run triggered by the push). If prompted, enable Actions for the repository.
+5. Open the successful build run and download **HTMLViewer-unsigned-IPA** under **Artifacts**. GitHub downloads a ZIP containing `HTMLViewer-unsigned.ipa`; **extract the artifact ZIP** to obtain the IPA.
+6. Install the unsigned IPA using a compatible sideloading tool that **signs it for your device** (for example [Sideloadly](https://sideloadly.io/) on Windows, with an Apple ID). A raw unsigned IPA will *not* install directly on a typical unmodified iPhone. Signing methods, Apple account limits, and expiration depend on your tool/account. Free Apple development provisioning often expires after seven days.
+7. In the app, tap **+ > HTML files or ZIP** to import pages or **+ > Website folder** to import a complete folder. Tap a library entry to open; choose display/orientation using the gear/ellipsis menu.
+
+### Why GitHub Actions uses a Mac
+
+You **personally need no Mac**, but Apple's `xcodebuild` tool runs on a **GitHub-hosted macOS machine**. The workflow installs XcodeGen, generates `HTMLViewer.xcodeproj` from `project.yml`, builds the iOS device `.app` with `CODE_SIGNING_ALLOWED=NO`, packages `Payload/HTMLViewer.app` in a ZIP renamed `.ipa`, and uploads the artifact.
+
+### Customize the app
+
+- App name: `HTMLViewer/Info.plist`, `CFBundleDisplayName`.
+- Bundle identifier: `project.yml`, `PRODUCT_BUNDLE_IDENTIFIER` (keep a unique reverse-DNS identifier when signing).
+- Min iOS version: `project.yml` (currently iOS 17.0).
+- Orientation/modes: `HTMLViewer/Models/Site.swift`, `HTMLViewer/Views/ViewerView.swift`.
+- Data/import: `HTMLViewer/Services/SiteLibrary.swift`.
+- Web engine: `HTMLViewer/Views/BrowserWebView.swift`.
+- Local HTTP server: `HTMLViewer/Services/LocalSiteServer.swift`.
+- To change code, commit/push: GitHub rebuilds the IPA.
+
+### Test website included
+
+Import `sample-site.zip` into the app (or import the `sample-site` folder). It tests CSS, ES modules, WebGL, WebAssembly over `fetch`, `localStorage` persistence, secure-context detection, WebSocket API presence and WebGPU detection. Reopen the sample page after incrementing the localStorage counter to verify that its persistent origin is stable.
+
+### Import model
+
+- **HTML file:** each selected standalone HTML becomes its own site.
+- **ZIP:** all files are extracted as one site; `index.html` is preferred as an entry point.
+- **Folder:** a copy of the folder's full contents becomes one site. Use folders/ZIPs when assets are stored next to HTML files or in subdirectories.
+- **If a project contains multiple HTML entry pages**, open the site entry and navigate to them with its relative links, or import separately.
+- Imports are copied to local storage; changing the original in iCloud/Files does not change the imported copy. Device storage sets the practical capacity.
+
+## Technical limitations and security
+
+- `WKWebView` is Apple's system WebKit; this is **not** a replacement for Safari's engine or a desktop Chromium instance. Native extensions, arbitrary browser flags, Chrome-only features, privileged native file access and unrestricted background execution are not guaranteed.
+- WebGPU is **not guaranteed** just because a device has a GPU. iOS/WebKit may disable or restrict APIs inside embedded views.
+- Some web apps require a backend server, specific origin, cross-origin headers or HTTPS. A local viewer cannot magically run server-side Node/PHP/Python or bypass remote CORS.
+- Each site's localhost port remains constant so Web storage persists; a rare port collision with another local app may prevent the site from loading until it is assigned another port. Do not casually change a site's port if you need to retain its web-origin storage.
+- Imported JavaScript runs with normal webpage permissions. **Only import content you trust**. Remote scripts may send data to servers, and the app permits HTTP in web content for local-project compatibility.
+- The loopback server serves only files under its site's local directory and rejects non-loopback connections. Navigation to unrelated network addresses is up to WebKit. A stable port is an origin isolation aid, **not** an authentication mechanism or a hardened sandbox for mutually hostile HTML files.
+- GitHub runners and Apple toolchains change over time. If GitHub replaces its hosted runner image, update `runs-on` and re-run. GitHub Actions billing/quotas depend on your account and repo visibility.
+
+## Repository layout
+
+```text
+HTMLViewer-iOS/
+├── .github/workflows/build-ipa.yml
+├── HTMLViewer/
+│   ├── HTMLViewerApp.swift
+│   ├── Info.plist
+│   ├── Assets.xcassets/AppIcon.appiconset/
+│   ├── Models/Site.swift
+│   ├── Services/SiteLibrary.swift
+│   ├── Services/LocalSiteServer.swift
+│   └── Views/{LibraryView,ViewerView,BrowserWebView}.swift
+├── project.yml
+├── sample-site/         (a demonstration web project)
+└── sample-site.zip      (ready to import)
+```
+
+### If the workflow fails
+
+- **No workflow shows up:** `.github/workflows/build-ipa.yml` didn't get committed; make sure hidden dot-folders were copied.
+- **Could not resolve ZIPFoundation:** GitHub's package download/network failed; rerun, or inspect Xcode's package resolver error.
+- **Signing/provisioning error:** Verify that `CODE_SIGNING_ALLOWED=NO` is present and you are building the `iphoneos` destination, not trying to export a signed archive.
+- **Device cannot open IPA:** First sign using your sideloading method. A raw unsigned IPA is only a compiled package.
+- **Website missing assets:** Import the entire folder or ZIP with its CSS/JS/images, not only its top-level HTML.
+- **WebGPU missing:** Check `navigator.gpu` in `sample-site.zip`; availability is determined by the installed WebKit/OS and device.

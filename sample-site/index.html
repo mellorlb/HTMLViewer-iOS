@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>HTML Viewer Capability Test</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main>
+    <h1>HTML Viewer Test</h1>
+    <p>Import the <b>sample-site.zip</b> archive to test assets and browser APIs.</p>
+    <div id="results"></div>
+    <div class="actions">
+      <button id="persist">Increment persistent counter</button>
+      <button id="fullscreen">Request page fullscreen</button>
+    </div>
+    <canvas id="canvas" width="280" height="120"></canvas>
+    <small>Networking: <code>WebSocket</code> availability is checked, not an external connection.</small>
+  </main>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
