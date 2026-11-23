@@ -32,7 +32,7 @@ jobs:
 
       - name: Test safe site path and URL mapping
         run: |
-          swiftc HTMLViewer/Services/SitePathResolver.swift scripts/RouteSmokeTest.swift -o /tmp/htmlviewer-route-tests
+          swiftc HTMLViewer/Services/ImportFailure.swift HTMLViewer/Services/SiteDiskIndex.swift HTMLViewer/Services/SitePathResolver.swift scripts/RouteSmokeTest.swift -o /tmp/htmlviewer-route-tests
           /tmp/htmlviewer-route-tests
 
       - name: Install XcodeGen

@@ -28,25 +28,32 @@ final class SiteLibrary: ObservableObject {
         documents.appendingPathComponent(site.id.uuidString, isDirectory: true)
     }
 
-    /// Repair stale entry metadata (e.g. if a Files-provider import changed its
-    /// filename) rather than opening a broken localhost URL.
+    /// Return the exact URL found by the filesystem scanner. Never assume a
+    /// stored relative path can be blindly rebuilt into a readable file URL.
+    /// Also repairs stale entry names from older app versions in place.
+    func openableEntry(for site: Site) throws -> StoredHTMLFile {
+        let entry = try SiteDiskIndex.preferred(in: folder(for: site), storedPath: site.entryPath)
+        if var stored = sites.first(where: { $0.id == site.id }),
+           stored.entryPath != entry.relativePath {
+            stored.entryPath = entry.relativePath
+            update(stored)
+        }
+        return entry
+    }
+
+    /// Lightweight, shareable diagnostics without exposing the app container's
+    /// absolute path, which changes on reinstalls and across iOS versions.
+    func fileDiagnostics(for site: Site) -> String {
+        let directory = folder(for: site)
+        var isDirectory: ObjCBool = false
+        let folderExists = manager.fileExists(atPath: directory.path, isDirectory: &isDirectory)
+        let candidates = (try? SiteDiskIndex.files(in: directory)) ?? []
+        let names = candidates.prefix(8).map(\.relativePath).joined(separator: ", ")
+        return "Saved entry: \(site.entryPath). Storage folder exists: \(folderExists && isDirectory.boolValue). Readable HTML files: \(candidates.count). \(names.isEmpty ? "No HTML files found." : "Found: " + names)"
+    }
+
     func resolvedEntry(for site: Site) throws -> String {
-        let root = folder(for: site)
-        guard manager.fileExists(atPath: root.path) else {
-            throw ImportFailure.failed("This imported site's folder no longer exists. Please import it again.")
-        }
-        if SitePathResolver.verifiedEntry(path: site.entryPath, under: root) != nil {
-            return site.entryPath
-        }
-        let replacement = try SiteImporter.findEntry(in: root)
-        guard SitePathResolver.verifiedEntry(path: replacement, under: root) != nil else {
-            throw ImportFailure.failed("The imported HTML file is missing. Please import it again.")
-        }
-        if var updated = sites.first(where: { $0.id == site.id }) {
-            updated.entryPath = replacement
-            update(updated)
-        }
-        return replacement
+        try openableEntry(for: site).relativePath
     }
 
     func importURLs(_ urls: [URL]) async throws {
@@ -112,22 +119,7 @@ final class SiteLibrary: ObservableObject {
     }
 
     func htmlPaths(for site: Site) throws -> [String] {
-        let root = folder(for: site)
-        guard let enumerator = manager.enumerator(at: root,
-                includingPropertiesForKeys: [.isRegularFileKey],
-                options: [.skipsHiddenFiles]) else {
-            throw ImportFailure.failed("Could not list this site's files.")
-        }
-        var paths: [String] = []
-        for case let url as URL in enumerator {
-            guard ["html", "htm", "xhtml"].contains(url.pathExtension.lowercased()),
-                  (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else {
-                continue
-            }
-            let relative = String(url.path.dropFirst(root.path.count + 1))
-            paths.append(relative)
-        }
-        return paths.sorted(by: { $0.localizedStandardCompare($1) == .orderedAscending })
+        try SiteDiskIndex.files(in: folder(for: site)).map(\.relativePath)
     }
 
     func readHTML(for site: Site, path: String) throws -> String {
@@ -142,20 +134,17 @@ final class SiteLibrary: ObservableObject {
 
     private func verifiedHTMLURL(for site: Site, path: String) throws -> URL {
         guard sites.contains(where: { $0.id == site.id }),
-              !path.isEmpty, !path.hasPrefix("/"), !path.contains("\\"),
-              path.split(separator: "/").allSatisfy({ $0 != "." && $0 != ".." }),
-              ["html", "htm", "xhtml"].contains((path as NSString).pathExtension.lowercased()) else {
+              SitePathResolver.safeRelativePath(path),
+              SiteDiskIndex.htmlExtensions.contains((path as NSString).pathExtension.lowercased()) else {
             throw ImportFailure.failed("Invalid HTML file path.")
         }
-        let root = folder(for: site).resolvingSymlinksInPath().standardizedFileURL
-        let url = root.appendingPathComponent(path)
-            .resolvingSymlinksInPath().standardizedFileURL
-        guard url.path.hasPrefix(root.path + "/"),
-              manager.fileExists(atPath: url.path),
-              (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else {
-            throw ImportFailure.failed("The HTML file is missing or outside the imported site.")
+        guard let file = try SiteDiskIndex.files(in: folder(for: site)).first(where: {
+            $0.relativePath == path ||
+            $0.relativePath.precomposedStringWithCanonicalMapping == path.precomposedStringWithCanonicalMapping
+        }) else {
+            throw ImportFailure.failed("The selected HTML file is not present in the imported website.")
         }
-        return url
+        return file.url
     }
 
     func update(_ site: Site) {
@@ -188,13 +177,6 @@ final class SiteLibrary: ObservableObject {
         } catch {
             NSLog("Failed to save site library: %@", error.localizedDescription)
         }
-    }
-}
-
-enum ImportFailure: LocalizedError {
-    case failed(String)
-    var errorDescription: String? {
-        switch self { case .failed(let reason): return reason }
     }
 }
 
@@ -238,7 +220,13 @@ enum SiteImporter {
                 throw ImportFailure.failed("Choose an HTML file, ZIP archive, or folder.")
             }
 
-            let entry = try findEntry(in: target)
+            let verified = try SiteDiskIndex.preferred(in: target)
+            // Open and read the file to catch unavailable iCloud/security-scope
+            // copies now instead of adding a broken site to the library.
+            let handle = try FileHandle(forReadingFrom: verified.url)
+            _ = try handle.read(upToCount: 1)
+            try handle.close()
+            let entry = verified.relativePath
             // Site initialization generates an ID; use the same ID as the directory.
             return Site(id: id, name: itemName.isEmpty ? "Untitled" : itemName,
                         entryPath: entry, port: port, importedAt: Date(),
@@ -250,30 +238,9 @@ enum SiteImporter {
     }
 
     static func findEntry(in folder: URL) throws -> String {
-        let manager = FileManager.default
-        guard let enumerator = manager.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey],
-                                                  options: [.skipsHiddenFiles]) else {
-            throw ImportFailure.failed("Unable to read imported content.")
-        }
-        var candidates: [String] = []
-        for case let candidate as URL in enumerator {
-            guard ["html", "htm", "xhtml"].contains(candidate.pathExtension.lowercased()),
-                  (try? candidate.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
-            let relative = String(candidate.path.dropFirst(folder.path.count + 1))
-            candidates.append(relative)
-        }
-        guard let choice = candidates.sorted(by: { a, b in
-            let aIndex = (a as NSString).lastPathComponent.lowercased() == "index.html"
-            let bIndex = (b as NSString).lastPathComponent.lowercased() == "index.html"
-            if aIndex != bIndex { return aIndex }
-            let aDepth = a.split(separator: "/").count
-            let bDepth = b.split(separator: "/").count
-            return aDepth == bDepth ? a.localizedStandardCompare(b) == .orderedAscending : aDepth < bDepth
-        }).first else {
-            throw ImportFailure.failed("No .html or .htm file was found.")
-        }
-        return choice
+        try SiteDiskIndex.preferred(in: folder).relativePath
     }
+
 }
 
 private extension Site {

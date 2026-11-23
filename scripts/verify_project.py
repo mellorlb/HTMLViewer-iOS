@@ -11,7 +11,7 @@ required = [
     'HTMLViewer/HTMLViewerApp.swift', 'HTMLViewer/Models/Site.swift',
     'HTMLViewer/Models/BrowserAddress.swift',
     'HTMLViewer/Services/SiteLibrary.swift', 'HTMLViewer/Services/LocalSiteServer.swift',
-    'HTMLViewer/Services/SitePathResolver.swift', 'HTMLViewer/Services/LocalHTTPProbe.swift', 'HTMLViewer/Services/LANShareManager.swift',
+    'HTMLViewer/Services/SitePathResolver.swift', 'HTMLViewer/Services/SiteDiskIndex.swift', 'HTMLViewer/Services/ImportFailure.swift', 'HTMLViewer/Services/LocalHTTPProbe.swift', 'HTMLViewer/Services/LANShareManager.swift',
     'HTMLViewer/Views/ServeSiteSheet.swift', 'scripts/RouteSmokeTest.swift',
     'HTMLViewer/Views/LibraryView.swift', 'HTMLViewer/Views/ViewerView.swift',
     'HTMLViewer/Views/BrowserWebView.swift',
@@ -24,8 +24,8 @@ for path in required:
     assert (root / path).is_file(), f'Missing {path}'
 plist = plistlib.loads((root / 'HTMLViewer/Info.plist').read_bytes())
 assert plist['UIFileSharingEnabled']
-assert plist['CFBundleShortVersionString'] == '1.3.0'
-assert plist['CFBundleVersion'] == '4'
+assert plist['CFBundleShortVersionString'] == '1.4.0'
+assert plist['CFBundleVersion'] == '5'
 assert len(plist['UISupportedInterfaceOrientations']) >= 3
 assets = json.loads((root / 'HTMLViewer/Assets.xcassets/AppIcon.appiconset/Contents.json').read_text())
 assert assets['images'][0]['filename'] == 'AppIcon.png'
@@ -39,4 +39,6 @@ assert 'LocalHTTPProbe.failureReason' in viewer, 'Local HTTP must be probed befo
 assert 'webView.loadFileURL(url, allowingReadAccessTo: readAccessURL)' in webview
 assert 'tryDirectFileFallback' in webview and 'tryHTMLStringFallback' in webview
 assert 'parameters.requiredLocalEndpoint' in server, 'Internal HTTP listener must bind to loopback'
+assert 'library.openableEntry(for: site)' in viewer, 'Viewer must use the actual scanned file URL'
+assert 'SiteDiskIndex.preferred' in (root / 'HTMLViewer/Services/SiteLibrary.swift').read_text()
 print(f'Preflight passed: {len(required)} required files, plist, app icon, fallback paths and demo ZIP')

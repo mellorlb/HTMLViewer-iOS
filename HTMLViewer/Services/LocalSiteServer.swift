@@ -26,7 +26,7 @@ final class LocalSiteServer {
     }
 
     func start() {
-        guard SitePathResolver.verifiedEntry(path: entryPath, under: root) != nil else {
+        guard (try? SiteDiskIndex.preferred(in: root, storedPath: entryPath)) != nil else {
             DispatchQueue.main.async { [weak self] in
                 self?.onError?("The HTML entry file was not found in the imported site. Reimport or edit the site.")
             }

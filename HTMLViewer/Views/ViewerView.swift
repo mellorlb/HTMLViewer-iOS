@@ -111,7 +111,8 @@ struct ViewerView: View {
                 HTMLEditorView(site: site, onSave: {
                     // The server reads the updated HTML from disk. Reload only
                     // when still viewing the local site; preserve remote pages.
-                    if browser.webView?.url?.host == "127.0.0.1" {
+                    if browser.webView?.url?.host == "127.0.0.1" ||
+                       browser.webView?.url?.isFileURL == true {
                         browser.reload()
                     }
                 })
@@ -189,11 +190,10 @@ struct ViewerView: View {
 
     @ViewBuilder
     private var viewerActions: some View {
-        if site != nil {
-            if localModeDetails != nil || browser.fallbackDetails != nil {
-                Button("Local loading details", systemImage: "info.circle") {
-                    showLocalModeDetails = true
-                }
+        if let site {
+            Button("Local file diagnostics", systemImage: "info.circle") {
+                localModeDetails = library.fileDiagnostics(for: site)
+                showLocalModeDetails = true
             }
             Button("Edit HTML code", systemImage: "chevron.left.forwardslash.chevron.right") {
                 editHTML = true
@@ -240,11 +240,10 @@ struct ViewerView: View {
         guard let site, !hasStartedLocalSite else { return }
         hasStartedLocalSite = true
         do {
-            let path = try library.resolvedEntry(for: site)
+            let entry = try library.openableEntry(for: site)
+            let path = entry.relativePath
             let root = library.folder(for: site)
-            guard let file = SitePathResolver.verifiedEntry(path: path, under: root) else {
-                throw ImportFailure.failed("The imported HTML entry is not on disk. Reimport this site.")
-            }
+            let file = entry.url
 
             // Display the real HTML file *first*. Earlier releases depended on
             // NWListener starting correctly before creating any WKWebView. If
@@ -292,7 +291,7 @@ struct ViewerView: View {
             }
             instance.start()
         } catch {
-            serverError = error.localizedDescription
+            serverError = error.localizedDescription + "\n\n" + library.fileDiagnostics(for: site)
         }
     }
 

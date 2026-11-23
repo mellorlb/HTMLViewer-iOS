@@ -1,16 +1,59 @@
 import Foundation
 
-/// A single, testable path mapping used by both the viewer and the HTTP server.
-/// Keep site URLs path-based so HTML assets and page-relative links keep working.
+/// Safe local resource path mapping for both WKWebView and the HTTP server.
 enum SitePathResolver {
+    static func safeRelativePath(_ path: String) -> Bool {
+        guard !path.isEmpty, !path.hasPrefix("/"), !path.contains("\\"), !path.contains("\0") else { return false }
+        return path.split(separator: "/", omittingEmptySubsequences: false).allSatisfy {
+            !$0.isEmpty && $0 != "." && $0 != ".."
+        }
+    }
+
+    /// An iOS Documents URL can have multiple equivalent /var and /private/var
+    /// spellings. Compare filesystem-canonical paths, never character counts of
+    /// unrelated URL.path strings.
+    static func relativePath(for candidate: URL, under directory: URL) -> String? {
+        let roots = [directory.standardizedFileURL, directory.resolvingSymlinksInPath().standardizedFileURL]
+        let candidates = [candidate.standardizedFileURL, candidate.resolvingSymlinksInPath().standardizedFileURL]
+        // APFS, iCloud and document-provider locations can surface a file URL
+        // via a different alias than the containing directory. Compare each
+        // standardized/canonical pairing, not only one textual spelling.
+        for root in roots {
+            for file in candidates {
+                let base = root.pathComponents
+                let parts = file.pathComponents
+                guard parts.count > base.count,
+                      Array(parts.prefix(base.count)) == base else { continue }
+                let relative = parts.dropFirst(base.count).joined(separator: "/")
+                if safeRelativePath(relative) { return relative }
+            }
+        }
+        return nil
+    }
+
+    static func isContainedRegularFile(_ candidate: URL, under directory: URL) -> Bool {
+        guard relativePath(for: candidate, under: directory) != nil else { return false }
+        // Do not depend on URLResourceValues.isRegularFile: on some iOS file
+        // providers that property is absent even when the file is readable.
+        let fm = FileManager.default
+        guard let attrs = try? fm.attributesOfItem(atPath: candidate.path),
+              attrs[.type] as? FileAttributeType == .typeRegular else { return false }
+        return true
+    }
+
+    static func verifiedEntry(path: String, under directory: URL) -> URL? {
+        guard safeRelativePath(path) else { return nil }
+        var candidate = directory
+        for part in path.split(separator: "/") { candidate.appendPathComponent(String(part)) }
+        return isContainedRegularFile(candidate, under: directory) ? candidate : nil
+    }
+
     static func entryURL(path: String, host: String, port: UInt16) -> URL? {
-        guard validRelativePath(path), !path.isEmpty else { return nil }
+        guard safeRelativePath(path) else { return nil }
         var components = URLComponents()
         components.scheme = "http"
         components.host = host
         components.port = Int(port)
-        // Encode each component independently. Percent, hash, question mark,
-        // spaces and non-ASCII file names must not change the request path.
         let allowed = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/%?#"))
         components.percentEncodedPath = "/" + path.split(separator: "/")
             .map { String($0).addingPercentEncoding(withAllowedCharacters: allowed) ?? "" }
@@ -26,43 +69,19 @@ enum SitePathResolver {
             return nil
         }
         let relative = String(decoded.dropFirst())
-        guard validRelativePath(relative) else { return nil }
-
-        let root = directory.resolvingSymlinksInPath().standardizedFileURL
-        var candidate = root
-        for component in relative.split(separator: "/") {
-            candidate.appendPathComponent(String(component))
+        // A root or directory URL can resolve to an index.html page.
+        let path = relative.isEmpty ? "index.html" : relative
+        let direct = verifiedEntry(path: path, under: directory)
+        if let direct { return direct }
+        // A request to /folder/ can use the directory's index file.
+        guard !relative.isEmpty else { return nil }
+        let normalized = relative.hasSuffix("/") ? String(relative.dropLast()) : relative
+        guard safeRelativePath(normalized) else { return nil }
+        for suffix in ["index.html", "index.htm"] {
+            if let index = verifiedEntry(path: normalized + "/" + suffix, under: directory) {
+                return index
+            }
         }
-        // Directories are allowed only when they contain an index file.
-        if (try? candidate.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
-            guard let index = ["index.html", "index.htm"].map({ candidate.appendingPathComponent($0) })
-                .first(where: { FileManager.default.fileExists(atPath: $0.path) }) else { return nil }
-            candidate = index
-        }
-        candidate = candidate.resolvingSymlinksInPath().standardizedFileURL
-        // Path-prefix checks must include the slash: /site-a must not cover /site-attack.
-        guard candidate.path.hasPrefix(root.path + "/"),
-              (try? candidate.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else {
-            return nil
-        }
-        return candidate
-    }
-
-    static func verifiedEntry(path: String, under directory: URL) -> URL? {
-        guard validRelativePath(path), !path.isEmpty else { return nil }
-        let file = directory.appendingPathComponent(path).resolvingSymlinksInPath().standardizedFileURL
-        let root = directory.resolvingSymlinksInPath().standardizedFileURL
-        guard file.path.hasPrefix(root.path + "/"),
-              (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else {
-            return nil
-        }
-        return file
-    }
-
-    private static func validRelativePath(_ path: String) -> Bool {
-        guard !path.hasPrefix("/"), !path.contains("\\"), !path.contains("\0") else { return false }
-        return path.split(separator: "/", omittingEmptySubsequences: false).allSatisfy {
-            $0 != "." && $0 != ".."
-        }
+        return nil
     }
 }

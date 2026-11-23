@@ -1,5 +1,19 @@
 # Changes
 
+## v1.4.0 — November 22, 2026
+
+- Fixed a false “The imported HTML file is missing” error: opening the saved
+  website now returns the real file URL from `SiteDiskIndex` instead of
+  enumerating a path and rebuilding it with incompatible path normalization.
+- Repairs old entry names by scanning stored site directories.
+- Validates newly imported HTML by opening the copied file for reading.
+- Updates code editing and LAN sharing to use the unified file index.
+- Adds an in-app **Local file diagnostics** entry that reports readable files
+  if a site still cannot open on a device.
+- Adds regressions for stale metadata, Unicode, aliases and URL traversal.
+- Same bundle ID; version **1.4.0 (build 5)**; iOS compilation/on-device
+  behavior still requires GitHub Actions and a real iPhone test.
+
 ## v1.3.0 — November 22, 2026
 
 - **Fix for imported HTML showing “Unable to open site”:** The native viewer now

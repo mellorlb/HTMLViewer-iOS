@@ -2,6 +2,36 @@
 
 A native SwiftUI **local HTML / website viewer** built around WKWebView. Requires **no local Mac** to compile: GitHub Actions runs Xcode on a GitHub-hosted macOS runner and produces an **unsigned IPA**.
 
+## Version 1.4.0: fix false “imported HTML file is missing” (build 5)
+
+**Issue addressed:** v1.3 sometimes located an imported HTML file during a
+folder scan and then incorrectly rejected it as “missing” when it rebuilt the
+file URL. Version 1.4 has a new `SiteDiskIndex` that keeps the **actual file URL
+returned by the filesystem** instead of guessing its location from a stored
+relative path. This handles differences between canonical iOS container URLs,
+filesystem aliases, and names with spaces or Unicode.
+
+- An existing entry with outdated metadata is found by scanning its own saved
+  folder and its entry path is repaired automatically. **Try opening the same
+  imported site after upgrading; you should not need to reimport it** if the
+  original file is still physically present in the app's Documents directory.
+- New imports are validated **after copying**; the app opens the copied HTML
+  for reading before adding it to the library. A bad copy is reported at import
+  rather than becoming a broken library entry.
+- The editor and HTTP sharing code now use the same filesystem inventory.
+- In any imported viewer, choose **gear / ellipsis > Local file diagnostics**
+  to see the stored entry name, whether its folder exists, and which HTML pages
+  the app can find. If no file is physically present, you must reimport it.
+- Keeps the `com.htmlviewer.fastviewer` bundle identifier, site metadata schema,
+  custom URL browsing, code editor, display controls and GitHub unsigned IPA
+  workflow. Install the update **over** your existing version to retain data.
+
+**Testing:** The new file index passes native Swift smoke tests for stale
+metadata, nested paths, Unicode/special-character names, directory aliases,
+and traversal protection. All Swift source files were syntax-parsed. There is
+no local iOS device/Xcode to verify a complete compiled app on the phone, so
+please confirm the fix with your existing imported files.
+
 ## Version 1.3.0: imported HTML startup fix (build 4)
 
 **This version addresses the reported “Unable to open site” problem.** The
@@ -63,7 +93,7 @@ syntax-checked and preflighted but still needs testing with your specific iPhone
 
 ### Updating from 1.1.0
 
-Version 1.2.0 was **build 3**; the latest project is **v1.3.0 (build 4)** with the same bundle identifier
+Version 1.2.0 was **build 3**; the latest project is **v1.4.0 (build 5)** with the same bundle identifier
 `com.htmlviewer.fastviewer`. Build and install as an upgrade using the same
 sideloading identity. **Do not delete the installed app before upgrading**, as
 that may erase imported files and browser storage. Sideloading utilities may
@@ -92,7 +122,7 @@ have their own reinstall/upgrade behavior; export a backup from Files if needed.
 ### Updating an existing installation
 
 The app **bundle identifier is unchanged** (`com.htmlviewer.fastviewer`), and
-version 1.1.0 originally increased the version to build `2`; v1.2.0 is build `3`. Build and sign the
+the version is now **1.4.0 (build 5)**. Build and sign the
 new IPA using the **same signing identity / sideloading configuration** to
 attempt an in-place upgrade. **Do not delete the installed app first** if you
 want to preserve your imported sites, localStorage and preferences. Some
@@ -200,6 +230,7 @@ HTMLViewer-iOS/
 - **Could not resolve ZIPFoundation:** GitHub's package download/network failed; rerun, or inspect Xcode's package resolver error.
 - **Signing/provisioning error:** Verify that `CODE_SIGNING_ALLOWED=NO` is present and you are building the `iphoneos` destination, not trying to export a signed archive.
 - **Device cannot open IPA:** First sign using your sideloading method. A raw unsigned IPA is only a compiled package.
+- **Imported HTML says missing:** Open the same entry after upgrading to v1.4; if it still fails, use the viewer menu **Local file diagnostics** and report the saved entry and readable HTML count.
 - **Website missing assets:** Import the entire folder or ZIP with its CSS/JS/images, not only its top-level HTML. A 404 now shows the exact relative URL that was requested.
 - **HTTP sharing fails:** Try another port (for example 8080 or 9000), keep HTML Viewer foregrounded, ensure both devices are on the same reachable Wi-Fi and allow local-network access if iOS prompts.
 - **WebGPU missing:** Check `navigator.gpu` in `sample-site.zip`; availability is determined by the installed WebKit/OS and device.

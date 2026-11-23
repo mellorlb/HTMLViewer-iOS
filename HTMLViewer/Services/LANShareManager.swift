@@ -30,7 +30,7 @@ final class LANShareManager: ObservableObject {
             throw ImportFailure.failed("Choose a TCP port from 1 to 65535.")
         }
         let root = library.folder(for: site)
-        guard SitePathResolver.verifiedEntry(path: entryPath, under: root) != nil else {
+        guard (try? SiteDiskIndex.files(in: root).contains(where: { $0.relativePath == entryPath })) == true else {
             throw ImportFailure.failed("The selected HTML file is missing. Choose another file or reimport the site.")
         }
         // A listener on all interfaces can conflict with an internal localhost
