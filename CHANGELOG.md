@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.0 (build 7)
+- Prevents the whole WKWebView being replaced after the localhost probe succeeds. HTTP is tested before the imported page is rendered; direct-file mode remains the timeout/failure fallback.
+- Keeps the SwiftUI viewer's frame stable when the iOS keyboard opens/closes, reducing canvas-game input resets.
+- Adds optional canvas-game text entry, simulated Enter, and opt-in Enter-on-keyboard-Done compatibility; synthetic events may not work in every game.
+- Adds Reorder/Done drag handles and Move up/down context actions; user ordering is saved in the existing site metadata file.
+- Adds pure-Foundation tests for the reorder algorithm and retains imported-file/network route checks, downloads, folder sharing and Files export.
+
 ## 1.5.0 (build 6)
 - Native WKDownload handling for downloadable links, Blob downloads, and non-renderable attachments. Files saved under app Documents/Downloads with unique names; Downloads list, share/export, delete and download status.
 - HTTP LAN sharing can select the imported folder root or any contained subfolder, with index.html default or a custom homepage. Root / serves the homepage; relative resources remain accessible. Folder containment rejects symlink escapes.

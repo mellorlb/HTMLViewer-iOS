@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ViewerView: View {
     @Environment(\.dismiss) private var dismiss
@@ -12,7 +13,6 @@ struct ViewerView: View {
     @State private var serverError: String?
     @State private var localModeDetails: String?
     @State private var showLocalModeDetails = false
-    @State private var webViewID = UUID()
     @State private var hasStartedLocalSite = false
     @State private var chrome: ChromeMode
     @State private var orientation: SiteOrientation
@@ -24,6 +24,8 @@ struct ViewerView: View {
     @State private var showURLPrompt = false
     @State private var urlText = ""
     @State private var addressError: String?
+    @State private var showGameKeyboard = false
+    @State private var sendEnterOnKeyboardClose = false
 
     private let site: Site?
     private let remoteURL: URL?
@@ -57,7 +59,6 @@ struct ViewerView: View {
                     BrowserWebView(url: pageURL, state: browser, downloads: downloads,
                                    fallbackFileURL: fallbackFileURL,
                                    fallbackReadAccessURL: site.map { library.folder(for: $0) })
-                        .id(webViewID)
                 } else if let serverError {
                     ContentUnavailableView("Unable to open site", systemImage: "wifi.exclamationmark",
                                            description: Text(serverError))
@@ -143,9 +144,17 @@ struct ViewerView: View {
                 }
             }
         }
+        // Prevent SwiftUI from resizing the whole WebGL canvas each time the
+        // on-screen keyboard appears/disappears. Keep WKWebView's identity stable.
+        .ignoresSafeArea(.keyboard, edges: .bottom)
         .ignoresSafeArea(chrome == .immersive ? .all : [])
         .statusBarHidden(chrome == .immersive)
         .persistentSystemOverlays(chrome == .immersive ? .hidden : .automatic)
+        .sheet(isPresented: $showGameKeyboard) {
+            GameKeyboardSheet { text, replace, pressReturn in
+                browser.sendGameText(text, replacing: replace, pressReturn: pressReturn)
+            }
+        }
         .sheet(isPresented: $showDownloads) {
             DownloadsView().environmentObject(downloads)
         }
@@ -184,6 +193,14 @@ struct ViewerView: View {
         } message: {
             Text(localModeDetails ?? browser.fallbackDetails ?? "No additional diagnostics are available.")
         }
+        .alert("Game keyboard", isPresented: Binding(
+            get: { browser.gameKeyboardError != nil },
+            set: { if !$0 { browser.gameKeyboardError = nil } }
+        )) {
+            Button("OK", role: .cancel) { browser.gameKeyboardError = nil }
+        } message: {
+            Text(browser.gameKeyboardError ?? "Could not send a key to the page.")
+        }
         .alert("Invalid address", isPresented: Binding(
             get: { addressError != nil },
             set: { if !$0 { addressError = nil } }
@@ -191,6 +208,13 @@ struct ViewerView: View {
             Button("OK", role: .cancel) { addressError = nil }
         } message: {
             Text(addressError ?? "Unknown error")
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            // Canvas games sometimes discard edits unless Enter is delivered.
+            // Opt-in only: normal sites, chats and text fields are unaffected.
+            if sendEnterOnKeyboardClose && !showGameKeyboard {
+                browser.sendGameEnter()
+            }
         }
         .onAppear { startSite() }
         .onDisappear {
@@ -259,6 +283,13 @@ struct ViewerView: View {
                 showServerSheet = true
             }
         }
+        Divider()
+        Button("Type into game / canvas", systemImage: "keyboard") {
+            showGameKeyboard = true
+        }
+        Button("Send Enter to game", systemImage: "return") {
+            browser.sendGameEnter()
+        }
         Button("Open custom URL", systemImage: "globe") {
             urlText = browser.webView?.url?.absoluteString ?? ""
             showURLPrompt = true
@@ -278,6 +309,7 @@ struct ViewerView: View {
                 }
             }
         }
+        Toggle("Game keyboard: Enter when Done closes keyboard", isOn: $sendEnterOnKeyboardClose)
         Menu("Orientation") {
             ForEach(SiteOrientation.allCases) { option in
                 Button {
@@ -302,18 +334,18 @@ struct ViewerView: View {
             let root = library.folder(for: site)
             let file = entry.url
 
-            // Display the real HTML file *first*. Earlier releases depended on
-            // NWListener starting correctly before creating any WKWebView. If
-            // the listener failed, users only saw "Unable to open site" even
-            // though the imported HTML was valid and readable.
+            // Verify the file using the working v1.4 disk index. Then probe
+            // localhost BEFORE constructing the WKWebView. Previous releases
+            // rendered file:// first and replaced the entire web view when
+            // HTTP became ready; canvas games could lose in-progress input.
             fallbackFileURL = file
-            pageURL = file
             serverError = nil
             localModeDetails = nil
 
             guard let httpURL = SitePathResolver.entryURL(path: path,
                               host: "127.0.0.1", port: site.port) else {
-                localModeDetails = "The HTML filename could not be represented as an HTTP URL. The page is open directly from Files."
+                pageURL = file
+                localModeDetails = "Could not construct a local HTTP URL; opened directly from the saved file."
                 return
             }
 
@@ -324,29 +356,38 @@ struct ViewerView: View {
                 guard let instance, self.server === instance else { return }
                 Task { @MainActor in
                     let reason = await LocalHTTPProbe.failureReason(for: httpURL)
-                    guard self.server === instance else { return }
+                    guard self.server === instance, self.pageURL == nil else { return }
                     if let reason {
-                        // Direct file mode is already displaying the imported
-                        // HTML; a failed HTTP start is informational, not fatal.
-                        self.localModeDetails = reason + " The file remains open in direct-file mode; certain fetch, module, or WASM operations may require HTTP."
+                        self.pageURL = file
+                        self.localModeDetails = reason + " Opened the saved file directly. Some origin-dependent web APIs may be limited."
                         instance.stop()
                         self.server = nil
-                    } else if self.browser.webView?.url?.isFileURL != false {
-                        // HTTP succeeded; upgrade to a normal origin for
-                        // JS modules, fetch(), WASM and persistent web storage.
-                        self.localModeDetails = nil
+                    } else {
+                        // Choose the final URL once, before running game JS.
+                        // Never replace the web view merely because HTTP became ready.
                         self.pageURL = httpURL
-                        self.webViewID = UUID()
                     }
                 }
             }
             instance.onError = { [weak instance] reason in
                 guard let instance, self.server === instance else { return }
-                self.localModeDetails = "The private HTTP server could not start: \(reason). The imported HTML was opened directly instead. Some web APIs may be restricted for file URLs."
+                if self.pageURL == nil { self.pageURL = file }
+                self.localModeDetails = "Local HTTP startup failed: \(reason). Opened directly from app storage."
                 instance.stop()
                 self.server = nil
             }
             instance.start()
+
+            // If a listener never reports ready or failed (rare on iOS), still
+            // open the imported file. Do not later swap a running game to HTTP.
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                guard self.pageURL == nil, self.server === instance else { return }
+                self.pageURL = file
+                self.localModeDetails = "Local HTTP startup timed out. Opened the saved HTML directly."
+                instance.stop()
+                self.server = nil
+            }
         } catch {
             serverError = error.localizedDescription + "\n\n" + library.fileDiagnostics(for: site)
         }

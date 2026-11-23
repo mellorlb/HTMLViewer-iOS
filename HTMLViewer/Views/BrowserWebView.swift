@@ -10,6 +10,7 @@ final class BrowserState: ObservableObject {
     @Published var title = ""
     @Published var errorMessage: String?
     @Published var fallbackDetails: String?
+    @Published var gameKeyboardError: String?
 
     func refresh() {
         guard let webView else { return }
@@ -23,6 +24,24 @@ final class BrowserState: ObservableObject {
     func forward() { webView?.goForward() }
     func reload() { webView?.reload() }
     func load(_ url: URL) { webView?.load(URLRequest(url: url)) }
+
+    func sendGameEnter() {
+        sendGameText("", replacing: false, pressReturn: true)
+    }
+
+    func sendGameText(_ text: String, replacing: Bool, pressReturn: Bool) {
+        guard let webView else { return }
+        // JSON encoding prevents quotes, backslashes or line breaks in user
+        // input from ever being evaluated as JavaScript source code.
+        guard let json = try? JSONSerialization.data(withJSONObject: [text], options: [.fragmentsAllowed]),
+              let encoded = String(data: json, encoding: .utf8) else { return }
+        let js = "window.__htmlViewerGameKeys && window.__htmlViewerGameKeys.send(\(encoded)[0], \(replacing), \(pressReturn))"
+        webView.evaluateJavaScript(js) { _, error in
+            if let error {
+                Task { @MainActor in self.gameKeyboardError = error.localizedDescription }
+            }
+        }
+    }
 }
 
 struct BrowserWebView: UIViewRepresentable {
@@ -45,12 +64,18 @@ struct BrowserWebView: UIViewRepresentable {
         settings.preferences.javaScriptCanOpenWindowsAutomatically = true
         settings.allowsInlineMediaPlayback = true
         settings.mediaTypesRequiringUserActionForPlayback = []
+        // Available but inactive until the user chooses a Game keyboard action.
+        settings.userContentController.addUserScript(WKUserScript(
+            source: GameKeyboardBridge.script,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true))
 
         let webView = WKWebView(frame: .zero, configuration: settings)
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.contentInsetAdjustmentBehavior = .never
+        webView.scrollView.keyboardDismissMode = .none
         webView.isInspectable = true // Inspect from Safari's Develop menu where supported.
         webView.backgroundColor = .systemBackground
         webView.isOpaque = false

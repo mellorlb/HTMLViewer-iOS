@@ -173,6 +173,22 @@ final class SiteLibrary: ObservableObject {
         save()
     }
 
+    /// Persist manual library ordering without changing any imported files or IDs.
+    /// Dragging rows uses List's offsets relative to the unfiltered array.
+    func reorder(fromOffsets offsets: IndexSet, toOffset: Int) {
+        sites = SiteOrder.moving(sites, fromOffsets: offsets, toOffset: toOffset)
+        save()
+    }
+
+    /// Accessible alternative to drag-and-drop for moving one row at a time.
+    func shift(_ site: Site, by steps: Int) {
+        guard let current = sites.firstIndex(where: { $0.id == site.id }),
+              sites.indices.contains(current + steps) else { return }
+        let item = sites.remove(at: current)
+        sites.insert(item, at: current + steps)
+        save()
+    }
+
     func delete(_ site: Site) {
         sites.removeAll { $0.id == site.id }
         try? manager.removeItem(at: folder(for: site))

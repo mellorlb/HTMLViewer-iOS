@@ -10,13 +10,13 @@ required = [
     '.github/workflows/build-ipa.yml', 'project.yml', 'HTMLViewer/Info.plist',
     'HTMLViewer/HTMLViewerApp.swift', 'HTMLViewer/Models/Site.swift',
     'HTMLViewer/Models/BrowserAddress.swift',
-    'HTMLViewer/Services/SiteLibrary.swift', 'HTMLViewer/Services/LocalSiteServer.swift',
+    'HTMLViewer/Services/SiteLibrary.swift', 'HTMLViewer/Services/SiteOrder.swift', 'HTMLViewer/Services/GameKeyboardBridge.swift', 'HTMLViewer/Services/LocalSiteServer.swift',
     'HTMLViewer/Services/SitePathResolver.swift', 'HTMLViewer/Services/SiteFolderIndex.swift', 'HTMLViewer/Services/DownloadLibrary.swift', 'HTMLViewer/Services/SiteDiskIndex.swift', 'HTMLViewer/Services/ImportFailure.swift', 'HTMLViewer/Services/LocalHTTPProbe.swift', 'HTMLViewer/Services/LANShareManager.swift',
     'HTMLViewer/Views/ServeSiteSheet.swift', 'HTMLViewer/Views/DownloadsView.swift', 'HTMLViewer/Models/HTMLSourceDocument.swift', 'scripts/RouteSmokeTest.swift',
     'HTMLViewer/Views/LibraryView.swift', 'HTMLViewer/Views/ViewerView.swift',
-    'HTMLViewer/Views/BrowserWebView.swift',
+    'HTMLViewer/Views/BrowserWebView.swift', 'HTMLViewer/Views/GameKeyboardSheet.swift',
     'HTMLViewer/Views/DocumentImportPicker.swift',
-    'HTMLViewer/Views/HTMLEditorView.swift',
+    'HTMLViewer/Views/HTMLEditorView.swift', 'scripts/SiteOrderSmokeTest.swift', 'scripts/test_game_keyboard.js',
     'HTMLViewer/Assets.xcassets/AppIcon.appiconset/Contents.json',
     'HTMLViewer/Assets.xcassets/AppIcon.appiconset/AppIcon.png', 'sample-site.zip',
 ]
@@ -24,8 +24,8 @@ for path in required:
     assert (root / path).is_file(), f'Missing {path}'
 plist = plistlib.loads((root / 'HTMLViewer/Info.plist').read_bytes())
 assert plist['UIFileSharingEnabled']
-assert plist['CFBundleShortVersionString'] == '1.5.0'
-assert plist['CFBundleVersion'] == '6'
+assert plist['CFBundleShortVersionString'] == '1.6.0'
+assert plist['CFBundleVersion'] == '7'
 assert len(plist['UISupportedInterfaceOrientations']) >= 3
 assets = json.loads((root / 'HTMLViewer/Assets.xcassets/AppIcon.appiconset/Contents.json').read_text())
 assert assets['images'][0]['filename'] == 'AppIcon.png'
@@ -34,8 +34,8 @@ with zipfile.ZipFile(root / 'sample-site.zip') as demo:
 viewer = (root / 'HTMLViewer/Views/ViewerView.swift').read_text()
 webview = (root / 'HTMLViewer/Views/BrowserWebView.swift').read_text()
 server = (root / 'HTMLViewer/Services/LocalSiteServer.swift').read_text()
-assert 'pageURL = file' in viewer, 'Local viewer must start from direct file as a fallback'
-assert 'LocalHTTPProbe.failureReason' in viewer, 'Local HTTP must be probed before switching'
+assert 'pageURL = file' in viewer, 'Local file fallback must remain present'
+assert 'LocalHTTPProbe.failureReason' in viewer, 'Local HTTP must be probed before loading the page'
 assert 'webView.loadFileURL(url, allowingReadAccessTo: readAccessURL)' in webview
 assert 'tryDirectFileFallback' in webview and 'tryHTMLStringFallback' in webview
 assert 'parameters.requiredLocalEndpoint' in server, 'Internal HTTP listener must bind to loopback'
@@ -45,4 +45,9 @@ assert 'SiteDiskIndex.preferred' in (root / 'HTMLViewer/Services/SiteLibrary.swi
 assert 'decideDestinationUsing' in webview and 'shouldPerformDownload' in webview
 assert 'folderPath' in (root / 'HTMLViewer/Views/ServeSiteSheet.swift').read_text()
 assert 'fileExporter' in (root / 'HTMLViewer/Views/HTMLEditorView.swift').read_text()
-print(f'Preflight passed: {len(required)} required files, plist, app icon, fallback paths and demo ZIP')
+assert 'webViewID = UUID()' not in viewer, 'The loaded game must never be replaced during localhost readiness'
+assert 'sendEnterOnKeyboardClose' in viewer and 'ignoresSafeArea(.keyboard' in viewer
+assert 'library.reorder(fromOffsets:' in (root / 'HTMLViewer/Views/LibraryView.swift').read_text()
+assert 'SiteOrder.moving' in (root / 'HTMLViewer/Services/SiteLibrary.swift').read_text()
+assert 'GameKeyboardBridge.script' in webview
+print(f'Preflight passed: {len(required)} required files, app metadata, keyboard stability, library reorder and existing features')

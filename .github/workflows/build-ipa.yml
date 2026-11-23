@@ -35,6 +35,14 @@ jobs:
           swiftc HTMLViewer/Services/ImportFailure.swift HTMLViewer/Services/SiteDiskIndex.swift HTMLViewer/Services/SitePathResolver.swift HTMLViewer/Services/SiteFolderIndex.swift scripts/RouteSmokeTest.swift -o /tmp/htmlviewer-route-tests
           /tmp/htmlviewer-route-tests
 
+      - name: Test persistent library reorder algorithm
+        run: |
+          swiftc HTMLViewer/Services/SiteOrder.swift scripts/SiteOrderSmokeTest.swift -o /tmp/htmlviewer-order-tests
+          /tmp/htmlviewer-order-tests
+
+      - name: Verify optional canvas game keyboard bridge
+        run: node scripts/test_game_keyboard.js
+
       - name: Install XcodeGen
         run: brew install xcodegen
 

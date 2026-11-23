@@ -2,6 +2,54 @@
 
 A native SwiftUI **local HTML / website viewer** built around WKWebView. Requires **no local Mac** to compile: GitHub Actions runs Xcode on a GitHub-hosted macOS runner and produces an **unsigned IPA**.
 
+## Version 1.6.0: game keyboard stability and manual list ordering (build 7)
+
+### Eaglercraft and canvas-game text entry
+
+- **No surprise reload when localhost starts:** An imported HTML site is verified
+  on disk (using the working v1.4 storage index), then the local server is probed
+  **before** creating the WKWebView. The app selects HTTP or the direct-file
+  fallback once. It **does not replace the running browser** when the server
+  becomes ready, which previously could reset a game username or clear JS state.
+  A 3-second connection timeout still opens the local file, so a failed server
+  will not leave the viewer blank. The localhost port and browser data store
+  remain unchanged for each imported site.
+- **Stable canvas frame during the iPhone keyboard:** The viewer ignores
+  SwiftUI's keyboard-safe-area resize, so showing/hiding the keyboard does not
+  repeatedly shrink and expand the whole WebGL view. On a normal HTML page,
+  an input near the bottom may be covered by the keyboard until you scroll.
+- **Optional game keyboard helpers:** In the viewer menu, **Send Enter to game**
+  simulates the Return key when a canvas game doesn't treat the iOS keyboard's
+  Done button as Return. **Type into game / canvas** lets you type using a
+  native iOS field, optionally clear the game's existing text, and send simulated
+  key events including Enter. To make the normal iOS Done action send Enter,
+  enable **Game keyboard: Enter when Done closes keyboard** in viewer settings.
+  This is *off by default* and applies only for the current viewer session, to
+  avoid unintentionally submitting ordinary website forms or game chat.
+  Browser security means synthetic JavaScript key events cannot impersonate
+  trusted keystrokes; some games will not accept them. The fallback is best effort,
+  and Eaglercraft-specific success still needs an iPhone test.
+
+### Manually reorder the saved HTML library
+
+1. On the main library screen, **clear the search field**.
+2. Tap **Reorder** in the top-left corner, drag the row handles, then tap **Done**.
+3. Or long-press a row and select **Move up** / **Move down**.
+
+Order is persisted to the existing `sites.json` metadata; page IDs, storage
+folders, web data, custom URLs, editor, Downloads and HTTP share settings stay
+intact. New imports still appear at the top. Filtering/searching does not allow
+reordering, to prevent misplacing hidden entries.
+
+**Update:** Same bundle ID `com.htmlviewer.fastviewer`, version **1.6.0 (build
+7)**. Sign and install over v1.5.0 with the same identity. Do not uninstall
+first if you want to keep previously imported data. GitHub Actions now runs a
+pure-Foundation list-order regression test in addition to the path tests.
+
+**Verification:** The Swift parser and non-iOS smoke tests run locally. iOS
+compilation requires the macOS GitHub runner, and the keyboard fix must be
+confirmed with the specific Eaglercraft HTML build on your phone.
+
 ## Version 1.5.0: downloads, folder hosting, Files export, draggable menu (build 6)
 
 This version builds on the **confirmed-working v1.4.0 imported-file path fix**.

@@ -17,6 +17,7 @@ struct LibraryView: View {
     @EnvironmentObject private var sharing: LANShareManager
     @EnvironmentObject private var downloads: DownloadLibrary
     @State private var search = ""
+    @State private var listEditMode: EditMode = .inactive
     @State private var destination: ViewerDestination?
     @State private var editingSite: Site?
     @State private var servingSite: Site?
@@ -99,18 +100,45 @@ struct LibraryView: View {
                                 Button("Serve over HTTP", systemImage: "network") {
                                     servingSite = site
                                 }
+                                Divider()
+                                Button("Move up", systemImage: "arrow.up") {
+                                    library.shift(site, by: -1)
+                                }
+                                .disabled(library.sites.first?.id == site.id || !search.isEmpty)
+                                Button("Move down", systemImage: "arrow.down") {
+                                    library.shift(site, by: 1)
+                                }
+                                .disabled(library.sites.last?.id == site.id || !search.isEmpty)
                                 Button("Delete", role: .destructive) { delete(site) }
                             }
                         }
                         .onDelete { offsets in
                             for index in offsets { delete(filtered[index]) }
                         }
+                        .onMove { offsets, destination in
+                            guard search.isEmpty, !library.isImporting else { return }
+                            library.reorder(fromOffsets: offsets, toOffset: destination)
+                        }
                     }
+                    .environment(\.editMode, $listEditMode)
                 }
             }
             .navigationTitle("HTML Viewer")
+            .onChange(of: search) { _, updated in
+                if !updated.isEmpty { listEditMode = .inactive }
+            }
             .searchable(text: $search, prompt: "Search imported pages")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    if !library.sites.isEmpty {
+                        Button(listEditMode == .active ? "Done" : "Reorder") {
+                            withAnimation {
+                                listEditMode = listEditMode == .active ? .inactive : .active
+                            }
+                        }
+                        .disabled(!search.isEmpty || library.isImporting)
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button("Import HTML / ZIP", systemImage: "doc.badge.plus") {
