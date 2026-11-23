@@ -41,6 +41,15 @@ final class LocalSiteServer {
             // Local site origins never accept a connection from another device.
             // Network mode intentionally binds reachable interfaces.
             parameters.acceptLocalOnly = (audience == .localhost)
+            if audience == .localhost {
+                // Bind to loopback itself, not all interfaces. The previous
+                // peer-string comparison could reject legitimate WKWebView
+                // connections on iOS because Network.framework may render
+                // the accepted endpoint differently on different OS releases.
+                parameters.requiredLocalEndpoint = .hostPort(
+                    host: "127.0.0.1", port: endpointPort
+                )
+            }
             let listener = try NWListener(using: parameters, on: endpointPort)
             self.listener = listener
             listener.newConnectionHandler = { [weak self] connection in
@@ -66,21 +75,13 @@ final class LocalSiteServer {
     func stop() {
         listener?.cancel()
         listener = nil
+        onReady = nil
+        onError = nil
     }
 
     private func accept(_ connection: NWConnection) {
-        if audience == .localhost {
-            // Additional defense if the OS does not enforce acceptLocalOnly.
-            guard case let .hostPort(host, _) = connection.endpoint else {
-                connection.cancel()
-                return
-            }
-            let remote = String(describing: host).lowercased()
-            guard ["127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost"].contains(remote) else {
-                connection.cancel()
-                return
-            }
-        }
+        // In localhost mode the listener is bound to 127.0.0.1 above, so no
+        // fragile string matching against connection.endpoint is needed.
         let handler = HTTPClient(connection: connection, root: root, entryPath: entryPath)
         handler.start(on: queue)
     }
@@ -186,6 +187,7 @@ private final class HTTPClient {
             let length = size == 0 ? 0 : end - start + 1
             var extra = [
                 "Content-Type: \(mimeType(file))",
+                "X-HTMLViewer-Server: 1",
                 "X-Content-Type-Options: nosniff",
                 "Accept-Ranges: bytes",
                 "Cache-Control: no-cache"

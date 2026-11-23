@@ -9,6 +9,7 @@ final class BrowserState: ObservableObject {
     @Published var isLoading = false
     @Published var title = ""
     @Published var errorMessage: String?
+    @Published var fallbackDetails: String?
 
     func refresh() {
         guard let webView else { return }
@@ -53,7 +54,13 @@ struct BrowserWebView: UIViewRepresentable {
         webView.backgroundColor = .systemBackground
         webView.isOpaque = false
         state.webView = webView
-        webView.load(URLRequest(url: url, cachePolicy: .useProtocolCachePolicy))
+        // Imported files must use the dedicated file-loading API. Merely
+        // passing a file:// URL to load(URLRequest) can be denied by WebKit.
+        if url.isFileURL, let readAccessURL = fallbackReadAccessURL {
+            webView.loadFileURL(url, allowingReadAccessTo: readAccessURL)
+        } else {
+            webView.load(URLRequest(url: url, cachePolicy: .useProtocolCachePolicy))
+        }
         return webView
     }
 
@@ -68,6 +75,7 @@ struct BrowserWebView: UIViewRepresentable {
         private let fallbackFileURL: URL?
         private let fallbackReadAccessURL: URL?
         private var hasAttemptedFallback = false
+        private var hasAttemptedHTMLStringFallback = false
 
         init(state: BrowserState, originalURL: URL,
              fallbackFileURL: URL?, fallbackReadAccessURL: URL?) {
@@ -90,6 +98,7 @@ struct BrowserWebView: UIViewRepresentable {
                let fallbackFileURL, let fallbackReadAccessURL,
                FileManager.default.fileExists(atPath: fallbackFileURL.path) {
                 hasAttemptedFallback = true
+                state.fallbackDetails = "Local HTTP returned 404 for the imported HTML. The original file was opened directly from app storage."
                 decisionHandler(.cancel)
                 DispatchQueue.main.async {
                     webView.loadFileURL(fallbackFileURL, allowingReadAccessTo: fallbackReadAccessURL)
@@ -113,14 +122,60 @@ struct BrowserWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            if tryDirectFileFallback(webView, error: error) ||
+                tryHTMLStringFallback(webView, error: error) { return }
             state.errorMessage = error.localizedDescription
             state.refresh()
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
                      withError error: Error) {
+            if tryDirectFileFallback(webView, error: error) ||
+                tryHTMLStringFallback(webView, error: error) { return }
             state.errorMessage = error.localizedDescription
             state.refresh()
+        }
+
+        /// A listener can report .ready while WKWebView still cannot connect
+        /// (port collision, local-network policy, a dropped connection, etc.).
+        /// Never strand an imported page on a browser error screen.
+        private func tryDirectFileFallback(_ webView: WKWebView, error: Error) -> Bool {
+            guard !hasAttemptedFallback,
+                  originalURL.scheme == "http",
+                  let fallbackFileURL, let fallbackReadAccessURL,
+                  FileManager.default.fileExists(atPath: fallbackFileURL.path) else {
+                return false
+            }
+            // Don't redirect a failed external link to an unrelated local file.
+            let failing = (error as NSError).userInfo[NSURLErrorFailingURLErrorKey] as? URL
+            if let failing, failing != originalURL { return false }
+            hasAttemptedFallback = true
+            state.fallbackDetails = "WebKit could not load the local HTTP page: \(error.localizedDescription). The imported HTML was opened directly from app storage."
+            state.errorMessage = nil
+            DispatchQueue.main.async {
+                webView.loadFileURL(fallbackFileURL, allowingReadAccessTo: fallbackReadAccessURL)
+            }
+            return true
+        }
+
+        /// Final display-only fallback if WebKit itself refuses the file URL.
+        /// This can render ordinary standalone HTML, but HTTP-dependent web
+        /// frameworks must still use the embedded server when available.
+        private func tryHTMLStringFallback(_ webView: WKWebView, error: Error) -> Bool {
+            guard !hasAttemptedHTMLStringFallback, let file = fallbackFileURL,
+                  let html = try? String(contentsOf: file, encoding: .utf8) else { return false }
+            let failing = (error as NSError).userInfo[NSURLErrorFailingURLErrorKey] as? URL
+            guard failing?.isFileURL == true ||
+                    (failing == nil && (originalURL.isFileURL || hasAttemptedFallback)) else {
+                return false
+            }
+            hasAttemptedHTMLStringFallback = true
+            state.fallbackDetails = "WebKit could not access the imported file URL. The HTML source was loaded directly from the app's copy. Linked assets and advanced web APIs may not work in this compatibility mode."
+            state.errorMessage = nil
+            DispatchQueue.main.async {
+                webView.loadHTMLString(html, baseURL: file.deletingLastPathComponent())
+            }
+            return true
         }
 
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,

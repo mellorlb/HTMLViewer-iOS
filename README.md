@@ -2,6 +2,34 @@
 
 A native SwiftUI **local HTML / website viewer** built around WKWebView. Requires **no local Mac** to compile: GitHub Actions runs Xcode on a GitHub-hosted macOS runner and produces an **unsigned IPA**.
 
+## Version 1.3.0: imported HTML startup fix (build 4)
+
+**This version addresses the reported “Unable to open site” problem.** The
+previous app waited for the private HTTP server to start before showing any
+HTML. If iOS refused a listener or connection, it displayed an error even when
+the imported file was physically present. Version 1.3 first opens the imported
+HTML through `WKWebView.loadFileURL(_:allowingReadAccessTo:)` using its own site
+folder as the allowed read scope. The direct-file viewer is not dependent on a
+local server.
+
+In parallel, the app tries the same private HTTP origin as older releases and
+checks the entry document with a real HTTP request. Only after it passes this
+check does the viewer switch to HTTP. If startup or navigation fails, the HTML
+remains viewable directly; a **Local loading details** menu entry records the
+reason. Plain HTML, CSS, canvas, and basic JavaScript can work in file mode.
+ES modules, WASM fetched from URLs, `fetch()`, and some origin-dependent storage
+features may require HTTP, so the app still prefers HTTP when it passes checks.
+
+The internal listener now explicitly binds to `127.0.0.1`, avoiding fragile
+checks against OS-dependent representations of accepted connections. LAN
+sharing remains separate and works as before. A last-resort HTML-string
+compatibility mode can display standalone source when WebKit blocks direct
+file loading, although that mode may not load linked assets.
+
+Update **in place** using the same bundle ID and signing identity to preserve
+your imported files. No new app permissions are required. The project is
+syntax-checked and preflighted but still needs testing with your specific iPhone.
+
 ## Version 1.2.0: open imported pages reliably + serve on a chosen HTTP port
 
 - An imported site's entry is checked before opening. Missing/renamed entries
@@ -35,7 +63,7 @@ A native SwiftUI **local HTML / website viewer** built around WKWebView. Require
 
 ### Updating from 1.1.0
 
-This is **v1.2.0 (build 3)** with the same bundle identifier
+Version 1.2.0 was **build 3**; the latest project is **v1.3.0 (build 4)** with the same bundle identifier
 `com.htmlviewer.fastviewer`. Build and install as an upgrade using the same
 sideloading identity. **Do not delete the installed app before upgrading**, as
 that may erase imported files and browser storage. Sideloading utilities may
@@ -75,7 +103,7 @@ using Files > On My iPhone > HTML Viewer before updating.
 
 - Import multiple `.html`/`.htm`/`.xhtml` files, ZIP archives, or complete website folders with relative assets via the native iOS Files picker.
 - Persist imported files in **Files > On My iPhone > HTML Viewer > HTML Sites** (subject to iOS Files app visibility).
-- Each import is an independent site, with a stable localhost origin/port and persistent `localStorage`, IndexedDB, cookies, and WebKit cache.
+- Each import is an independent site, with a stable localhost origin/port and persistent `localStorage`, IndexedDB, cookies, and WebKit cache when HTTP is available; direct-file compatibility mode has different storage behavior.
 - Open an arbitrary HTTP/HTTPS URL directly in the viewer, or edit imported HTML source.
 - Standard top toolbar, **No top bar**, or **Fullscreen** (no system status bar). The latter two keep a floating ellipsis menu for exit/controls.
 - Per-site **Automatic / Portrait / Landscape** preference; rotate dynamically when the OS permits.

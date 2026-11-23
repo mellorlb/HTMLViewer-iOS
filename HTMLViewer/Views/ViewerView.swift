@@ -9,6 +9,10 @@ struct ViewerView: View {
     @State private var fallbackFileURL: URL?
     @State private var server: LocalSiteServer?
     @State private var serverError: String?
+    @State private var localModeDetails: String?
+    @State private var showLocalModeDetails = false
+    @State private var webViewID = UUID()
+    @State private var hasStartedLocalSite = false
     @State private var chrome: ChromeMode
     @State private var orientation: SiteOrientation
     @State private var editHTML = false
@@ -49,6 +53,7 @@ struct ViewerView: View {
                     BrowserWebView(url: pageURL, state: browser,
                                    fallbackFileURL: fallbackFileURL,
                                    fallbackReadAccessURL: site.map { library.folder(for: $0) })
+                        .id(webViewID)
                 } else if let serverError {
                     ContentUnavailableView("Unable to open site", systemImage: "wifi.exclamationmark",
                                            description: Text(serverError))
@@ -123,6 +128,11 @@ struct ViewerView: View {
         } message: {
             Text("Open an HTTP or HTTPS website in the current viewer.")
         }
+        .alert("Local HTML loading", isPresented: $showLocalModeDetails) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(localModeDetails ?? browser.fallbackDetails ?? "No additional diagnostics are available.")
+        }
         .alert("Invalid address", isPresented: Binding(
             get: { addressError != nil },
             set: { if !$0 { addressError = nil } }
@@ -180,6 +190,11 @@ struct ViewerView: View {
     @ViewBuilder
     private var viewerActions: some View {
         if site != nil {
+            if localModeDetails != nil || browser.fallbackDetails != nil {
+                Button("Local loading details", systemImage: "info.circle") {
+                    showLocalModeDetails = true
+                }
+            }
             Button("Edit HTML code", systemImage: "chevron.left.forwardslash.chevron.right") {
                 editHTML = true
             }
@@ -222,25 +237,59 @@ struct ViewerView: View {
 
     private func startSite() {
         OrientationControl.apply(orientation)
-        guard let site, server == nil else { return }
+        guard let site, !hasStartedLocalSite else { return }
+        hasStartedLocalSite = true
         do {
             let path = try library.resolvedEntry(for: site)
-            fallbackFileURL = SitePathResolver.verifiedEntry(path: path,
-                                                            under: library.folder(for: site))
-            let instance = LocalSiteServer(root: library.folder(for: site),
-                                           port: site.port, entryPath: path,
-                                           audience: .localhost)
-            instance.onReady = {
-                guard let url = SitePathResolver.entryURL(path: path,
-                                                          host: "127.0.0.1", port: site.port) else {
-                    self.serverError = "The HTML filename cannot be opened as a URL."
-                    return
-                }
-                self.serverError = nil
-                self.pageURL = url
+            let root = library.folder(for: site)
+            guard let file = SitePathResolver.verifiedEntry(path: path, under: root) else {
+                throw ImportFailure.failed("The imported HTML entry is not on disk. Reimport this site.")
             }
-            instance.onError = { reason in self.serverError = reason }
+
+            // Display the real HTML file *first*. Earlier releases depended on
+            // NWListener starting correctly before creating any WKWebView. If
+            // the listener failed, users only saw "Unable to open site" even
+            // though the imported HTML was valid and readable.
+            fallbackFileURL = file
+            pageURL = file
+            serverError = nil
+            localModeDetails = nil
+
+            guard let httpURL = SitePathResolver.entryURL(path: path,
+                              host: "127.0.0.1", port: site.port) else {
+                localModeDetails = "The HTML filename could not be represented as an HTTP URL. The page is open directly from Files."
+                return
+            }
+
+            let instance = LocalSiteServer(root: root, port: site.port,
+                                           entryPath: path, audience: .localhost)
             server = instance
+            instance.onReady = { [weak instance] in
+                guard let instance, self.server === instance else { return }
+                Task { @MainActor in
+                    let reason = await LocalHTTPProbe.failureReason(for: httpURL)
+                    guard self.server === instance else { return }
+                    if let reason {
+                        // Direct file mode is already displaying the imported
+                        // HTML; a failed HTTP start is informational, not fatal.
+                        self.localModeDetails = reason + " The file remains open in direct-file mode; certain fetch, module, or WASM operations may require HTTP."
+                        instance.stop()
+                        self.server = nil
+                    } else if self.browser.webView?.url?.isFileURL != false {
+                        // HTTP succeeded; upgrade to a normal origin for
+                        // JS modules, fetch(), WASM and persistent web storage.
+                        self.localModeDetails = nil
+                        self.pageURL = httpURL
+                        self.webViewID = UUID()
+                    }
+                }
+            }
+            instance.onError = { [weak instance] reason in
+                guard let instance, self.server === instance else { return }
+                self.localModeDetails = "The private HTTP server could not start: \(reason). The imported HTML was opened directly instead. Some web APIs may be restricted for file URLs."
+                instance.stop()
+                self.server = nil
+            }
             instance.start()
         } catch {
             serverError = error.localizedDescription
