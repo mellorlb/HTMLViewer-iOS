@@ -6,12 +6,14 @@ struct HTMLViewerApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var library = SiteLibrary()
     @StateObject private var sharing = LANShareManager()
+    @StateObject private var downloads = DownloadLibrary()
 
     var body: some Scene {
         WindowGroup {
             LibraryView()
                 .environmentObject(library)
                 .environmentObject(sharing)
+                .environmentObject(downloads)
         }
     }
 }

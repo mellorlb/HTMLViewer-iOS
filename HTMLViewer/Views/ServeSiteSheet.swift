@@ -8,6 +8,8 @@ struct ServeSiteSheet: View {
 
     let site: Site
     @State private var portText = "8080"
+    @State private var folderPath = "."
+    @State private var folderPaths: [String] = ["."]
     @State private var entryPath = ""
     @State private var htmlFiles: [String] = []
     @State private var formError: String?
@@ -18,19 +20,38 @@ struct ServeSiteSheet: View {
         return sharing.session
     }
 
+    private var controlsLocked: Bool {
+        active != nil || sharing.startingSiteID == site.id
+    }
+
     var body: some View {
         NavigationStack {
             Form {
-                Section("Serve HTML") {
+                Section("Website folder") {
+                    Picker("Serve folder", selection: $folderPath) {
+                        ForEach(folderPaths, id: \.self) { folder in
+                            Text(folder == "." ? "Entire imported site /" : "/" + folder + "/")
+                                .tag(folder)
+                        }
+                    }
+                    .disabled(controlsLocked)
+                    .onChange(of: folderPath) { _, _ in refreshPages() }
                     if htmlFiles.count > 1 {
-                        Picker("Start page", selection: $entryPath) {
-                            ForEach(htmlFiles, id: \.self) { file in
-                                Text(file).tag(file)
+                        Picker("Homepage", selection: $entryPath) {
+                            ForEach(htmlFiles, id: \.self) { path in
+                                Text(path).tag(path)
                             }
                         }
+                        .disabled(controlsLocked)
                     } else {
-                        LabeledContent("Start page", value: entryPath.isEmpty ? site.entryPath : entryPath)
+                        LabeledContent("Homepage", value: entryPath.isEmpty ? "No HTML file" : entryPath)
                     }
+                    Text("The selected folder becomes the HTTP document root. All files and subfolders inside it (CSS, JS, WASM, images, etc.) are served. Requests to / open the homepage; index.html is selected by default when present.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("HTTP server") {
                     HStack {
                         Text("TCP port")
                         Spacer()
@@ -39,8 +60,9 @@ struct ServeSiteSheet: View {
                             .multilineTextAlignment(.trailing)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 110)
+                            .disabled(controlsLocked)
                     }
-                    Text("Choose any available TCP port from 1 to 65535. Ports in use or restricted by iOS will return an error.")
+                    Text("Choose an available TCP port from 1 to 65535. Restricted or occupied ports may fail.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                     if sharing.startingSiteID == site.id {
@@ -51,6 +73,7 @@ struct ServeSiteSheet: View {
                     } else if active == nil {
                         Button("Start HTTP server", systemImage: "network") { start() }
                             .buttonStyle(.borderedProminent)
+                            .disabled(entryPath.isEmpty)
                     } else {
                         Button("Stop HTTP server", systemImage: "stop.fill", role: .destructive) {
                             sharing.stop()
@@ -60,8 +83,10 @@ struct ServeSiteSheet: View {
 
                 if let active {
                     Section("Open on another device") {
+                        LabeledContent("Serving folder", value: active.folderPath == "." ? "/" : active.folderPath)
+                        LabeledContent("Default homepage", value: active.entryPath)
                         if knownAddresses.isEmpty {
-                            Text("No Wi-Fi IPv4 address found. Connect the iPhone to Wi-Fi, then tap Refresh addresses.")
+                            Text("No Wi-Fi IPv4 address found. Connect to Wi-Fi, then tap Refresh addresses.")
                                 .foregroundStyle(.secondary)
                         } else {
                             ForEach(knownAddresses, id: \.self) { ip in
@@ -91,14 +116,12 @@ struct ServeSiteSheet: View {
                 }
 
                 if let message = formError ?? sharing.errorMessage {
-                    Section("Error") {
-                        Text(message).foregroundStyle(.red)
-                    }
+                    Section("Error") { Text(message).foregroundStyle(.red) }
                 }
 
                 Section("Important") {
-                    Text("Anyone who can reach this address on your network can read the selected HTML project and its assets. No password or HTTPS is provided. Only serve files you are comfortable sharing.")
-                    Text("Keep HTML Viewer open and in the foreground, with your iPhone and other device on a network that permits device-to-device connections. iOS can suspend this server when the app is backgrounded or the screen locks.")
+                    Text("Anyone who can reach the server can read any file in the selected folder or its subfolders. This HTTP service has no password or encryption. Use trusted Wi-Fi only.")
+                    Text("Keep the app in the foreground; iOS may suspend the HTTP listener when the app is backgrounded or the phone locks.")
                 }
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -106,27 +129,51 @@ struct ServeSiteSheet: View {
             .navigationTitle("HTTP server")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                }
+                ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
             }
             .onAppear { configure() }
         }
     }
 
     private func configure() {
-        htmlFiles = (try? library.htmlPaths(for: site)) ?? [site.entryPath]
-        if htmlFiles.isEmpty { htmlFiles = [site.entryPath] }
-        entryPath = active?.entryPath ?? (htmlFiles.contains(site.entryPath) ? site.entryPath : htmlFiles[0])
+        do {
+            folderPaths = try library.shareableFolders(for: site)
+            if folderPaths.isEmpty { folderPaths = ["."] }
+            folderPath = active?.folderPath ?? "."
+            if !folderPaths.contains(folderPath) { folderPath = "." }
+            refreshPages(preferred: active?.entryPath)
+        } catch {
+            formError = error.localizedDescription
+        }
         portText = active.map { String($0.port) } ?? "8080"
         knownAddresses = LANAddresses.ipv4()
+    }
+
+    private func refreshPages(preferred: String? = nil) {
+        do {
+            htmlFiles = try library.shareableHTMLPaths(for: site, folderPath: folderPath)
+            if let preferred, htmlFiles.contains(preferred) {
+                entryPath = preferred
+            } else if let index = htmlFiles.first(where: { $0.lowercased() == "index.html" }) {
+                entryPath = index
+            } else if let index = htmlFiles.first(where: { $0.lowercased() == "index.htm" }) {
+                entryPath = index
+            } else {
+                entryPath = htmlFiles.first ?? ""
+            }
+            formError = htmlFiles.isEmpty ? "This folder contains no HTML homepage. Choose another folder." : nil
+        } catch {
+            htmlFiles = []
+            entryPath = ""
+            formError = error.localizedDescription
+        }
     }
 
     private func start() {
         formError = nil
         do {
-            try sharing.start(site: site, entryPath: entryPath,
-                              portString: portText, library: library)
+            try sharing.start(site: site, folderPath: folderPath,
+                              entryPath: entryPath, portString: portText, library: library)
         } catch {
             formError = error.localizedDescription
         }

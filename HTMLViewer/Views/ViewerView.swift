@@ -4,6 +4,7 @@ struct ViewerView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var library: SiteLibrary
     @EnvironmentObject private var sharing: LANShareManager
+    @EnvironmentObject private var downloads: DownloadLibrary
     @StateObject private var browser = BrowserState()
     @State private var pageURL: URL?
     @State private var fallbackFileURL: URL?
@@ -16,6 +17,9 @@ struct ViewerView: View {
     @State private var chrome: ChromeMode
     @State private var orientation: SiteOrientation
     @State private var editHTML = false
+    @State private var showDownloads = false
+    @State private var floatingPosition: CGPoint?
+    @State private var floatingDragStart: CGPoint?
     @State private var showServerSheet = false
     @State private var showURLPrompt = false
     @State private var urlText = ""
@@ -50,7 +54,7 @@ struct ViewerView: View {
             ZStack(alignment: .topTrailing) {
                 Color(uiColor: .systemBackground)
                 if let pageURL {
-                    BrowserWebView(url: pageURL, state: browser,
+                    BrowserWebView(url: pageURL, state: browser, downloads: downloads,
                                    fallbackFileURL: fallbackFileURL,
                                    fallbackReadAccessURL: site.map { library.folder(for: $0) })
                         .id(webViewID)
@@ -62,26 +66,69 @@ struct ViewerView: View {
                 }
 
                 if chrome != .toolbar {
-                    Menu {
-                        Button("Back to library", systemImage: "house") { close() }
-                        Button("Back", systemImage: "chevron.left") { browser.back() }
-                            .disabled(!browser.canGoBack)
-                        Button("Forward", systemImage: "chevron.right") { browser.forward() }
-                            .disabled(!browser.canGoForward)
-                        Button("Reload", systemImage: "arrow.clockwise") { browser.reload() }
-                        Divider()
-                        viewerActions
-                        Divider()
-                        preferences
-                    } label: {
-                        Image(systemName: "ellipsis.circle.fill")
-                            .font(.title2)
-                            .foregroundStyle(.white)
-                            .padding(10)
-                            .background(.black.opacity(0.55), in: Capsule())
+                    GeometryReader { proxy in
+                        let bounds = proxy.size
+                        let initial = floatingPosition ?? CGPoint(x: bounds.width - 38, y: 36)
+                        let location = clamped(initial, in: bounds)
+                        Menu {
+                            Button("Back to library", systemImage: "house") { close() }
+                            Button("Back", systemImage: "chevron.left") { browser.back() }
+                                .disabled(!browser.canGoBack)
+                            Button("Forward", systemImage: "chevron.right") { browser.forward() }
+                                .disabled(!browser.canGoForward)
+                            Button("Reload", systemImage: "arrow.clockwise") { browser.reload() }
+                            Divider()
+                            viewerActions
+                            Divider()
+                            preferences
+                        } label: {
+                            Image(systemName: "ellipsis.circle.fill")
+                                .font(.title2)
+                                .foregroundStyle(.white)
+                                .padding(10)
+                                .background(.black.opacity(0.55), in: Capsule())
+                        }
+                        .accessibilityLabel("Page controls; drag to move")
+                        .simultaneousGesture(
+                            DragGesture(minimumDistance: 8)
+                                .onChanged { value in
+                                    if floatingDragStart == nil {
+                                        floatingDragStart = location
+                                    }
+                                    let start = floatingDragStart ?? location
+                                    floatingPosition = clamped(
+                                        CGPoint(x: start.x + value.translation.width,
+                                                y: start.y + value.translation.height),
+                                        in: bounds)
+                                }
+                                .onEnded { _ in floatingDragStart = nil }
+                        )
+                        .position(location)
                     }
-                    .padding(.top, 8)
-                    .padding(.trailing, 12)
+                }
+                if let downloadMessage = downloads.latestMessage {
+                    VStack {
+                        Spacer()
+                        HStack(spacing: 10) {
+                            Image(systemName: "arrow.down.circle.fill")
+                            Text(downloadMessage).font(.caption).lineLimit(2)
+                            Button("Downloads") {
+                                downloads.latestMessage = nil
+                                showDownloads = true
+                            }
+                            .font(.caption.weight(.semibold))
+                            Button {
+                                downloads.latestMessage = nil
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                            }
+                            .accessibilityLabel("Dismiss download notification")
+                        }
+                        .padding(10)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 16)
+                    }
                 }
                 if let message = browser.errorMessage {
                     VStack {
@@ -99,6 +146,9 @@ struct ViewerView: View {
         .ignoresSafeArea(chrome == .immersive ? .all : [])
         .statusBarHidden(chrome == .immersive)
         .persistentSystemOverlays(chrome == .immersive ? .hidden : .automatic)
+        .sheet(isPresented: $showDownloads) {
+            DownloadsView().environmentObject(downloads)
+        }
         .sheet(isPresented: $showServerSheet) {
             if let site {
                 ServeSiteSheet(site: site)
@@ -172,6 +222,10 @@ struct ViewerView: View {
             Button { browser.reload() } label: {
                 Image(systemName: "arrow.clockwise")
             }
+            Button { showDownloads = true } label: {
+                Image(systemName: "arrow.down.circle")
+            }
+            .accessibilityLabel("Downloads")
             Menu {
                 viewerActions
                 Divider()
@@ -190,6 +244,9 @@ struct ViewerView: View {
 
     @ViewBuilder
     private var viewerActions: some View {
+        Button("Downloads", systemImage: "arrow.down.circle") {
+            showDownloads = true
+        }
         if let site {
             Button("Local file diagnostics", systemImage: "info.circle") {
                 localModeDetails = library.fileDiagnostics(for: site)
@@ -313,6 +370,13 @@ struct ViewerView: View {
         } catch {
             addressError = error.localizedDescription
         }
+    }
+
+    private func clamped(_ point: CGPoint, in size: CGSize) -> CGPoint {
+        let xLimit = max(29, size.width - 29)
+        let yLimit = max(29, size.height - 29)
+        return CGPoint(x: min(max(point.x, 29), xLimit),
+                       y: min(max(point.y, 29), yLimit))
     }
 
     private func close() { dismiss() }

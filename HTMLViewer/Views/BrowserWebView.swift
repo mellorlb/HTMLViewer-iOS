@@ -28,11 +28,12 @@ final class BrowserState: ObservableObject {
 struct BrowserWebView: UIViewRepresentable {
     let url: URL
     @ObservedObject var state: BrowserState
+    @ObservedObject var downloads: DownloadLibrary
     var fallbackFileURL: URL? = nil
     var fallbackReadAccessURL: URL? = nil
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(state: state, originalURL: url,
+        Coordinator(state: state, downloads: downloads, originalURL: url,
                     fallbackFileURL: fallbackFileURL,
                     fallbackReadAccessURL: fallbackReadAccessURL)
     }
@@ -69,17 +70,20 @@ struct BrowserWebView: UIViewRepresentable {
         // the toolbar/orientation settings change. Never reload on view updates.
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         private let state: BrowserState
+        private let downloads: DownloadLibrary
+        private var destinations: [ObjectIdentifier: URL] = [:]
         private let originalURL: URL
         private let fallbackFileURL: URL?
         private let fallbackReadAccessURL: URL?
         private var hasAttemptedFallback = false
         private var hasAttemptedHTMLStringFallback = false
 
-        init(state: BrowserState, originalURL: URL,
+        init(state: BrowserState, downloads: DownloadLibrary, originalURL: URL,
              fallbackFileURL: URL?, fallbackReadAccessURL: URL?) {
             self.state = state
+            self.downloads = downloads
             self.originalURL = originalURL
             self.fallbackFileURL = fallbackFileURL
             self.fallbackReadAccessURL = fallbackReadAccessURL
@@ -103,6 +107,10 @@ struct BrowserWebView: UIViewRepresentable {
                 DispatchQueue.main.async {
                     webView.loadFileURL(fallbackFileURL, allowingReadAccessTo: fallbackReadAccessURL)
                 }
+                return
+            }
+            if !navigationResponse.canShowMIMEType {
+                decisionHandler(.download)
                 return
             }
             decisionHandler(.allow)
@@ -185,9 +193,47 @@ struct BrowserWebView: UIViewRepresentable {
                ["tel", "mailto", "sms"].contains(scheme) {
                 UIApplication.shared.open(url)
                 decisionHandler(.cancel)
+            } else if navigationAction.shouldPerformDownload {
+                decisionHandler(.download)
             } else {
                 decisionHandler(.allow)
             }
+        }
+
+        func webView(_ webView: WKWebView, navigationAction: WKNavigationAction,
+                     didBecome download: WKDownload) {
+            download.delegate = self
+        }
+
+        func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse,
+                     didBecome download: WKDownload) {
+            download.delegate = self
+        }
+
+        func download(_ download: WKDownload, decideDestinationUsing response: URLResponse,
+                      suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
+            do {
+                let destination = try downloads.destination(for: suggestedFilename)
+                destinations[ObjectIdentifier(download)] = destination
+                completionHandler(destination)
+            } catch {
+                downloads.failed(error)
+                completionHandler(nil)
+            }
+        }
+
+        func downloadDidFinish(_ download: WKDownload) {
+            if let destination = destinations.removeValue(forKey: ObjectIdentifier(download)) {
+                downloads.finished(destination)
+            } else {
+                downloads.refresh()
+            }
+        }
+
+        func download(_ download: WKDownload, didFailWithError error: Error,
+                      resumeData: Data?) {
+            destinations.removeValue(forKey: ObjectIdentifier(download))
+            downloads.failed(error)
         }
 
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
@@ -195,7 +241,13 @@ struct BrowserWebView: UIViewRepresentable {
                      windowFeatures: WKWindowFeatures) -> WKWebView? {
             // Open target=_blank links in this viewer instead of losing the tap.
             if navigationAction.targetFrame == nil {
-                webView.load(navigationAction.request)
+                if navigationAction.shouldPerformDownload {
+                    webView.startDownload(using: navigationAction.request) { download in
+                        download.delegate = self
+                    }
+                } else {
+                    webView.load(navigationAction.request)
+                }
             }
             return nil
         }

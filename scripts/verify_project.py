@@ -11,8 +11,8 @@ required = [
     'HTMLViewer/HTMLViewerApp.swift', 'HTMLViewer/Models/Site.swift',
     'HTMLViewer/Models/BrowserAddress.swift',
     'HTMLViewer/Services/SiteLibrary.swift', 'HTMLViewer/Services/LocalSiteServer.swift',
-    'HTMLViewer/Services/SitePathResolver.swift', 'HTMLViewer/Services/SiteDiskIndex.swift', 'HTMLViewer/Services/ImportFailure.swift', 'HTMLViewer/Services/LocalHTTPProbe.swift', 'HTMLViewer/Services/LANShareManager.swift',
-    'HTMLViewer/Views/ServeSiteSheet.swift', 'scripts/RouteSmokeTest.swift',
+    'HTMLViewer/Services/SitePathResolver.swift', 'HTMLViewer/Services/SiteFolderIndex.swift', 'HTMLViewer/Services/DownloadLibrary.swift', 'HTMLViewer/Services/SiteDiskIndex.swift', 'HTMLViewer/Services/ImportFailure.swift', 'HTMLViewer/Services/LocalHTTPProbe.swift', 'HTMLViewer/Services/LANShareManager.swift',
+    'HTMLViewer/Views/ServeSiteSheet.swift', 'HTMLViewer/Views/DownloadsView.swift', 'HTMLViewer/Models/HTMLSourceDocument.swift', 'scripts/RouteSmokeTest.swift',
     'HTMLViewer/Views/LibraryView.swift', 'HTMLViewer/Views/ViewerView.swift',
     'HTMLViewer/Views/BrowserWebView.swift',
     'HTMLViewer/Views/DocumentImportPicker.swift',
@@ -24,8 +24,8 @@ for path in required:
     assert (root / path).is_file(), f'Missing {path}'
 plist = plistlib.loads((root / 'HTMLViewer/Info.plist').read_bytes())
 assert plist['UIFileSharingEnabled']
-assert plist['CFBundleShortVersionString'] == '1.4.0'
-assert plist['CFBundleVersion'] == '5'
+assert plist['CFBundleShortVersionString'] == '1.5.0'
+assert plist['CFBundleVersion'] == '6'
 assert len(plist['UISupportedInterfaceOrientations']) >= 3
 assets = json.loads((root / 'HTMLViewer/Assets.xcassets/AppIcon.appiconset/Contents.json').read_text())
 assert assets['images'][0]['filename'] == 'AppIcon.png'
@@ -39,6 +39,10 @@ assert 'LocalHTTPProbe.failureReason' in viewer, 'Local HTTP must be probed befo
 assert 'webView.loadFileURL(url, allowingReadAccessTo: readAccessURL)' in webview
 assert 'tryDirectFileFallback' in webview and 'tryHTMLStringFallback' in webview
 assert 'parameters.requiredLocalEndpoint' in server, 'Internal HTTP listener must bind to loopback'
+assert 'showDownloads' in viewer and 'floatingPosition' in viewer, 'Downloads and floating menu must be present'
 assert 'library.openableEntry(for: site)' in viewer, 'Viewer must use the actual scanned file URL'
 assert 'SiteDiskIndex.preferred' in (root / 'HTMLViewer/Services/SiteLibrary.swift').read_text()
+assert 'decideDestinationUsing' in webview and 'shouldPerformDownload' in webview
+assert 'folderPath' in (root / 'HTMLViewer/Views/ServeSiteSheet.swift').read_text()
+assert 'fileExporter' in (root / 'HTMLViewer/Views/HTMLEditorView.swift').read_text()
 print(f'Preflight passed: {len(required)} required files, plist, app icon, fallback paths and demo ZIP')

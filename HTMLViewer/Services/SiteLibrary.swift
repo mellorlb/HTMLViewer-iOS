@@ -122,6 +122,26 @@ final class SiteLibrary: ObservableObject {
         try SiteDiskIndex.files(in: folder(for: site)).map(\.relativePath)
     }
 
+    func shareableFolders(for site: Site) throws -> [String] {
+        try SiteFolderIndex.folders(in: folder(for: site))
+    }
+
+    func shareableRoot(for site: Site, folderPath: String) throws -> URL {
+        guard sites.contains(where: { $0.id == site.id }),
+              let root = SiteFolderIndex.containedDirectory(root: folder(for: site),
+                                                            relativePath: folderPath) else {
+            throw ImportFailure.failed("The selected folder is no longer accessible.")
+        }
+        return root
+    }
+
+    /// HTML paths are relative to the selected HTTP root so any chosen
+    /// homepage and its assets can be served without exposing parent folders.
+    func shareableHTMLPaths(for site: Site, folderPath: String) throws -> [String] {
+        let root = try shareableRoot(for: site, folderPath: folderPath)
+        return try SiteDiskIndex.files(in: root).map(\.relativePath)
+    }
+
     func readHTML(for site: Site, path: String) throws -> String {
         try String(contentsOf: verifiedHTMLURL(for: site, path: path), encoding: .utf8)
     }

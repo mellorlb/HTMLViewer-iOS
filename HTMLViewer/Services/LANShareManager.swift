@@ -6,10 +6,16 @@ struct SharedSiteSession: Equatable {
     let siteID: UUID
     let name: String
     let entryPath: String
+    let folderPath: String
     let port: UInt16
 
     func address(ip: String) -> URL? {
-        SitePathResolver.entryURL(path: entryPath, host: ip, port: port)
+        var url = URLComponents()
+        url.scheme = "http"
+        url.host = ip
+        url.port = Int(port)
+        url.path = "/"
+        return url.url
     }
 }
 
@@ -24,12 +30,12 @@ final class LANShareManager: ObservableObject {
 
     private var listener: LocalSiteServer?
 
-    func start(site: Site, entryPath: String, portString: String, library: SiteLibrary) throws {
+    func start(site: Site, folderPath: String, entryPath: String, portString: String, library: SiteLibrary) throws {
         let cleaned = portString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let number = UInt16(cleaned), number > 0 else {
             throw ImportFailure.failed("Choose a TCP port from 1 to 65535.")
         }
-        let root = library.folder(for: site)
+        let root = try library.shareableRoot(for: site, folderPath: folderPath)
         guard (try? SiteDiskIndex.files(in: root).contains(where: { $0.relativePath == entryPath })) == true else {
             throw ImportFailure.failed("The selected HTML file is missing. Choose another file or reimport the site.")
         }
@@ -39,7 +45,7 @@ final class LANShareManager: ObservableObject {
         errorMessage = nil
         startingSiteID = site.id
         let next = SharedSiteSession(siteID: site.id, name: site.name,
-                                     entryPath: entryPath, port: number)
+                                     entryPath: entryPath, folderPath: folderPath, port: number)
         let server = LocalSiteServer(root: root, port: number,
                                      entryPath: entryPath, audience: .network)
         listener = server

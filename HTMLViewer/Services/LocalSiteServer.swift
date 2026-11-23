@@ -151,18 +151,24 @@ private final class HTTPClient {
             return
         }
         let requestTarget = String(parts[1])
-        // Redirect / to the real entry location. The redirect is essential for
-        // relative JS/CSS/images when the entry is in a subfolder of a ZIP.
+        // The selected homepage is available at /. For a homepage located in
+        // a nested directory, redirect to its real path so relative CSS/JS
+        // links correctly resolve against that directory.
+        var target = requestTarget
         if requestTarget == "/" || requestTarget.hasPrefix("/?") {
-            if let url = SitePathResolver.entryURL(path: entryPath, host: "localhost", port: 1) {
-                redirect(to: url.path(percentEncoded: true))
-            } else {
+            guard let url = SitePathResolver.entryURL(path: entryPath, host: "localhost", port: 1) else {
                 respond(status: 500, body: "Invalid entry path")
+                return
             }
-            return
+            let encodedPath = url.path(percentEncoded: true)
+            if entryPath.contains("/") {
+                redirect(to: encodedPath)
+                return
+            }
+            target = encodedPath
         }
 
-        guard let file = SitePathResolver.resolve(target: requestTarget, under: root) else {
+        guard let file = SitePathResolver.resolve(target: target, under: root) else {
             // Never leak app-container paths into a response. Display the URL
             // being requested, so missing assets can be diagnosed on-device.
             respond(status: 404, body: "File not found: \(requestTarget)")

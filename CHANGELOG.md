@@ -1,3 +1,12 @@
+# Changelog
+
+## 1.5.0 (build 6)
+- Native WKDownload handling for downloadable links, Blob downloads, and non-renderable attachments. Files saved under app Documents/Downloads with unique names; Downloads list, share/export, delete and download status.
+- HTTP LAN sharing can select the imported folder root or any contained subfolder, with index.html default or a custom homepage. Root / serves the homepage; relative resources remain accessible. Folder containment rejects symlink escapes.
+- HTML editor exports its current buffer to the iOS Files app using a system file exporter, without modifying imported original.
+- Draggable floating ellipsis in no-top-bar/fullscreen modes, clamped within the viewer bounds.
+- Preserves the 1.4.0 verified imported-file discovery/opening fix and the existing GitHub Actions unsigned-IPA workflow.
+
 # Changes
 
 ## v1.4.0 — November 22, 2026

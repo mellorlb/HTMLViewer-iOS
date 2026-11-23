@@ -53,6 +53,23 @@ struct TestRouting {
         defer { try? fm.removeItem(at: outside) }
         try fm.createSymbolicLink(at: root.appendingPathComponent("leak.html"), withDestinationURL: outside)
         precondition(SitePathResolver.resolve(target: "/leak.html", under: root) == nil)
+        // The selected LAN document root can be the whole site or a child.
+        let folders = try SiteFolderIndex.folders(in: root)
+        precondition(folders.contains(".") && folders.contains("nested project"))
+        let sharedRoot = SiteFolderIndex.containedDirectory(root: root, relativePath: "nested project")!
+        precondition(SitePathResolver.resolve(target: "/index.html", under: sharedRoot)?.lastPathComponent == "index.html")
+        precondition(SitePathResolver.resolve(target: "/My%20Page%20%231.html", under: sharedRoot) == nil,
+                     "Sharing nested directory must not access parent files")
+        precondition(SiteFolderIndex.containedDirectory(root: root, relativePath: "../") == nil)
+        precondition(SiteFolderIndex.containedDirectory(root: root, relativePath: "nested project/..") == nil)
+        let outsideFolder = fm.temporaryDirectory.appendingPathComponent("hv-outer-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: outsideFolder, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: outsideFolder) }
+        try "private".write(to: outsideFolder.appendingPathComponent("secret.html"), atomically: true, encoding: .utf8)
+        try fm.createSymbolicLink(at: root.appendingPathComponent("directory-link"), withDestinationURL: outsideFolder)
+        precondition(SiteFolderIndex.containedDirectory(root: root, relativePath: "directory-link") == nil)
+        precondition(SitePathResolver.resolve(target: "/directory-link/secret.html", under: root) == nil)
+        print("PASS: directory-root isolation and nested symlink protection")
         print("PASS: index routes, traversal and missing-file checks")
     }
 }

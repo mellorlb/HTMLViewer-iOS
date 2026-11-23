@@ -14,10 +14,20 @@
     <div class="actions">
       <button id="persist">Increment persistent counter</button>
       <button id="fullscreen">Request page fullscreen</button>
+      <a href="download-demo.txt" download>Download test text file</a>
+      <button id="blob-download">Download generated Blob</button>
     </div>
     <canvas id="canvas" width="280" height="120"></canvas>
     <small>Networking: <code>WebSocket</code> availability is checked, not an external connection.</small>
   </main>
+  <script>
+    document.getElementById('blob-download').onclick = () => {
+      const url = URL.createObjectURL(new Blob(['Generated offline by HTML Viewer\n'], {type: 'text/plain'}));
+      const a = document.createElement('a');
+      a.href = url; a.download = 'generated-test.txt'; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    };
+  </script>
   <script type="module" src="main.js"></script>
 </body>
 </html>

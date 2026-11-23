@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// A plain-text editor for any HTML entry page in an imported site.
 /// Edits are written only to the app's private copy, not the imported original.
@@ -17,6 +18,8 @@ struct HTMLEditorView: View {
     @State private var pendingPath: String?
     @State private var shouldCloseAfterDiscard = false
     @State private var showDiscardPrompt = false
+    @State private var exportDocument: HTMLSourceDocument?
+    @State private var showExporter = false
 
     private var hasChanges: Bool { source != savedSource }
 
@@ -80,8 +83,27 @@ struct HTMLEditorView: View {
                         .fontWeight(.semibold)
                         .disabled(!hasChanges || currentPath.isEmpty)
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        exportDocument = HTMLSourceDocument(text: source)
+                        showExporter = true
+                    } label: {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                    .accessibilityLabel("Save HTML to Files")
+                    .disabled(currentPath.isEmpty)
+                }
             }
             .onAppear(perform: loadList)
+            .fileExporter(isPresented: $showExporter,
+                          document: exportDocument,
+                          contentType: .html,
+                          defaultFilename: (currentPath as NSString).lastPathComponent) { result in
+                if case .failure(let error) = result {
+                    errorMessage = error.localizedDescription
+                }
+                exportDocument = nil
+            }
             .confirmationDialog("Discard unsaved changes?", isPresented: $showDiscardPrompt,
                                 titleVisibility: .visible) {
                 Button("Discard Changes", role: .destructive) {

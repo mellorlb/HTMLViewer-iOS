@@ -2,6 +2,70 @@
 
 A native SwiftUI **local HTML / website viewer** built around WKWebView. Requires **no local Mac** to compile: GitHub Actions runs Xcode on a GitHub-hosted macOS runner and produces an **unsigned IPA**.
 
+## Version 1.5.0: downloads, folder hosting, Files export, draggable menu (build 6)
+
+This version builds on the **confirmed-working v1.4.0 imported-file path fix**.
+
+### Download files while browsing
+
+- Uses the native iOS **WKDownload** APIs for `<a download>` links (including
+  downloadable Blob files), attachment responses, and resources that WebKit
+  cannot display. Page rendering stays in WKWebView.
+- Files are saved persistently to **Files > On My iPhone > HTML Viewer > Downloads**.
+- Open **Downloads** from the browser's top-bar download button or its ellipsis
+  menu; the same Downloads item is in the library's **+** menu. Share individual
+  files to another Files location, or delete them. A banner reports download
+  completion/failure. Repeated filenames get a numbered suffix.
+- Download support remains subject to WebKit policies, website authentication,
+  CORS, permissions and iOS storage space. The app does not bypass websites'
+  anti-download restrictions or guarantee all JavaScript download techniques.
+
+### Serve a full website folder over HTTP
+
+1. Import an entire folder or a ZIP containing the HTML and its assets.
+2. Long-press the imported site > **Serve over HTTP** (or open the viewer menu).
+3. Choose **Serve folder**: the whole imported project, or one of its nested
+   subdirectories. The chosen folder becomes the HTTP document root.
+4. Choose **Homepage**: defaults to `index.html` in that folder when available,
+   otherwise pick any HTML file, including a nested page. Enter a TCP port.
+5. Tap **Start HTTP server**. Visit the displayed URL such as
+   `http://192.168.1.20:8080/` from another device on the same reachable Wi-Fi.
+
+All files under that document root (HTML, CSS, JS, WASM, media, downloads, and
+subfolders) are served using their normal relative URLs. `/` serves the chosen
+homepage, or redirects to a nested homepage so relative assets resolve
+correctly. A parent folder cannot be fetched from a selected child folder.
+The HTTP server has **no authentication/TLS**; other clients on reachable
+networks can read the hosted content. Keep the app in the foreground; iOS can
+suspend LAN hosting when locked/backgrounded.
+
+### Save edited source to Files
+
+Open **Edit HTML code**, select an HTML page, and tap the **share/export icon**
+(next to Save). Choose a destination in the system Files exporter. This exports
+whatever is in the editor **including unsaved edits** as an `.html` file; it
+**does not overwrite the original Files import** or change the app's copy. The
+separate **Save** button writes changes to the app's editable local copy.
+
+### Move the fullscreen controls
+
+In **No top bar** and **Fullscreen** modes, drag the floating **three-dot menu**
+to any position within the visible viewer area. Tap it to open navigation,
+download, editor, server and display controls. The position is retained while
+the current viewer is open, and stays inside the visible bounds on rotation.
+
+### Update notes
+
+The app bundle ID remains `com.htmlviewer.fastviewer`, with version **1.5.0
+(build 6)**. Use the same signing identity and update **in place**. Do not
+uninstall the existing app if you want to preserve imported HTML and web data.
+The previously working direct-file-first import flow and private-localhost
+HTTP upgrade logic are preserved.
+
+**Verification:** Swift parser and pure-Foundation path tests run here; the
+GitHub macOS runner must perform the actual iOS compile, and behavior still
+needs real-iPhone testing.
+
 ## Version 1.4.0: fix false “imported HTML file is missing” (build 5)
 
 **Issue addressed:** v1.3 sometimes located an imported HTML file during a
@@ -122,7 +186,7 @@ have their own reinstall/upgrade behavior; export a backup from Files if needed.
 ### Updating an existing installation
 
 The app **bundle identifier is unchanged** (`com.htmlviewer.fastviewer`), and
-the version is now **1.4.0 (build 5)**. Build and sign the
+the version is now **1.5.0 (build 6)**. Build and sign the
 new IPA using the **same signing identity / sideloading configuration** to
 attempt an in-place upgrade. **Do not delete the installed app first** if you
 want to preserve your imported sites, localStorage and preferences. Some
@@ -134,7 +198,10 @@ using Files > On My iPhone > HTML Viewer before updating.
 - Import multiple `.html`/`.htm`/`.xhtml` files, ZIP archives, or complete website folders with relative assets via the native iOS Files picker.
 - Persist imported files in **Files > On My iPhone > HTML Viewer > HTML Sites** (subject to iOS Files app visibility).
 - Each import is an independent site, with a stable localhost origin/port and persistent `localStorage`, IndexedDB, cookies, and WebKit cache when HTTP is available; direct-file compatibility mode has different storage behavior.
-- Open an arbitrary HTTP/HTTPS URL directly in the viewer, or edit imported HTML source.
+- Open an arbitrary HTTP/HTTPS URL directly in the viewer, or edit imported HTML source and export to Files.
+- Download attachments, binary assets and supported download links to a persistent Files-visible Downloads folder.
+- Select an imported folder, preferred HTML homepage and port to serve the entire website to your LAN.
+- Drag the floating three-dot menu to any on-screen position in minimal/fullscreen modes.
 - Standard top toolbar, **No top bar**, or **Fullscreen** (no system status bar). The latter two keep a floating ellipsis menu for exit/controls.
 - Per-site **Automatic / Portrait / Landscape** preference; rotate dynamically when the OS permits.
 - Safari/WebKit web runtime: CSS, JS, ES modules, canvas, WebGL, WebAssembly, fetch, WebSockets, multimedia and online requests.
@@ -180,12 +247,14 @@ You **personally need no Mac**, but Apple's `xcodebuild` tool runs on a **GitHub
 - Web engine: `HTMLViewer/Views/BrowserWebView.swift`.
 - Local HTTP server: `HTMLViewer/Services/LocalSiteServer.swift`.
 - Path handling: `HTMLViewer/Services/SitePathResolver.swift` (covered by GitHub Actions tests).
-- LAN sharing: `HTMLViewer/Services/LANShareManager.swift` and `HTMLViewer/Views/ServeSiteSheet.swift`.
+- LAN sharing: `HTMLViewer/Services/LANShareManager.swift`, `HTMLViewer/Services/SiteFolderIndex.swift` and `HTMLViewer/Views/ServeSiteSheet.swift`.
+- File downloads: `HTMLViewer/Services/DownloadLibrary.swift` and `HTMLViewer/Views/DownloadsView.swift`.
+- HTML editor export: `HTMLViewer/Models/HTMLSourceDocument.swift`.
 - To change code, commit/push: GitHub rebuilds the IPA.
 
 ### Test website included
 
-Import `sample-site.zip` into the app (or import the `sample-site` folder). It tests CSS, ES modules, WebGL, WebAssembly over `fetch`, `localStorage` persistence, secure-context detection, WebSocket API presence and WebGPU detection. Reopen the sample page after incrementing the localStorage counter to verify that its persistent origin is stable.
+Import `sample-site.zip` into the app (or import the `sample-site` folder). It tests CSS, ES modules, WebGL, WebAssembly over `fetch`, `localStorage` persistence, secure-context detection, WebSocket API presence and WebGPU detection. It also includes downloadable text and generated Blob samples to verify the new download flow. Reopen the sample page after incrementing the localStorage counter to verify that its persistent origin is stable.
 
 ### Import model
 

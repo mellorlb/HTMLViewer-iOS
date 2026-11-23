@@ -33,6 +33,12 @@ enum SitePathResolver {
 
     static func isContainedRegularFile(_ candidate: URL, under directory: URL) -> Bool {
         guard relativePath(for: candidate, under: directory) != nil else { return false }
+        // Canonical containment is required for an HTTP file: a symlinked
+        // directory inside a shared site must not expose an outside folder.
+        let canonicalRoot = directory.resolvingSymlinksInPath().standardizedFileURL.pathComponents
+        let canonicalFile = candidate.resolvingSymlinksInPath().standardizedFileURL.pathComponents
+        guard canonicalFile.count > canonicalRoot.count,
+              Array(canonicalFile.prefix(canonicalRoot.count)) == canonicalRoot else { return false }
         // Do not depend on URLResourceValues.isRegularFile: on some iOS file
         // providers that property is absent even when the file is readable.
         let fm = FileManager.default

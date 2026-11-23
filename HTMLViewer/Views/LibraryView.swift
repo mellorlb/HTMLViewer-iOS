@@ -15,10 +15,12 @@ private enum ViewerDestination: Identifiable {
 struct LibraryView: View {
     @EnvironmentObject private var library: SiteLibrary
     @EnvironmentObject private var sharing: LANShareManager
+    @EnvironmentObject private var downloads: DownloadLibrary
     @State private var search = ""
     @State private var destination: ViewerDestination?
     @State private var editingSite: Site?
     @State private var servingSite: Site?
+    @State private var showDownloads = false
     @State private var pickerMode: DocumentImportPicker.Mode?
     @State private var showURLPrompt = false
     @State private var urlText = ""
@@ -124,11 +126,18 @@ struct LibraryView: View {
                         Button("Open custom URL", systemImage: "globe") {
                             showURLPrompt = true
                         }
+                        Divider()
+                        Button("Downloads", systemImage: "arrow.down.circle") {
+                            showDownloads = true
+                        }
                     } label: {
                         Image(systemName: "plus")
                     }
                     .disabled(library.isImporting)
                 }
+            }
+            .sheet(isPresented: $showDownloads) {
+                DownloadsView().environmentObject(downloads)
             }
             .sheet(item: $pickerMode) { mode in
                 DocumentImportPicker(mode: mode) { result in
