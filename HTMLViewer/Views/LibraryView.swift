@@ -1,12 +1,27 @@
 import SwiftUI
-import UniformTypeIdentifiers
+
+private enum ViewerDestination: Identifiable {
+    case site(Site)
+    case url(URL)
+
+    var id: String {
+        switch self {
+        case .site(let site): return "site-\(site.id.uuidString)"
+        case .url(let url): return "url-\(url.absoluteString)"
+        }
+    }
+}
 
 struct LibraryView: View {
     @EnvironmentObject private var library: SiteLibrary
     @State private var search = ""
-    @State private var selectedSite: Site?
-    @State private var importFiles = false
-    @State private var importFolder = false
+    @State private var destination: ViewerDestination?
+    @State private var editingSite: Site?
+    @State private var pickerMode: DocumentImportPicker.Mode?
+    @State private var showURLPrompt = false
+    @State private var urlText = ""
+    @State private var showNewHTMLPrompt = false
+    @State private var newHTMLName = "Untitled"
     @State private var errorMessage: String?
 
     private var filtered: [Site] {
@@ -24,11 +39,12 @@ struct LibraryView: View {
                     ContentUnavailableView {
                         Label("Your HTML library", systemImage: "chevron.left.forwardslash.chevron.right")
                     } description: {
-                        Text("Import HTML files, a website ZIP, or an entire folder. Pages stay on your device.")
+                        Text("Import HTML, ZIPs or site folders, create a page, or open a URL.")
                     } actions: {
-                        Button("Import files") { importFiles = true }
+                        Button("Import HTML / ZIP") { pickerMode = .files }
                             .buttonStyle(.borderedProminent)
-                        Button("Import folder") { importFolder = true }
+                        Button("Open URL") { showURLPrompt = true }
+                        Button("New HTML") { showNewHTMLPrompt = true }
                     }
                 } else {
                     List {
@@ -40,7 +56,7 @@ struct LibraryView: View {
                         }
                         ForEach(filtered) { site in
                             Button {
-                                selectedSite = site
+                                destination = .site(site)
                             } label: {
                                 HStack(spacing: 14) {
                                     Image(systemName: "curlybraces.square.fill")
@@ -66,7 +82,12 @@ struct LibraryView: View {
                                 .padding(.vertical, 5)
                             }
                             .contextMenu {
-                                Button("Open") { selectedSite = site }
+                                Button("Open", systemImage: "arrow.up.right.square") {
+                                    destination = .site(site)
+                                }
+                                Button("Edit HTML", systemImage: "chevron.left.forwardslash.chevron.right") {
+                                    editingSite = site
+                                }
                                 Button("Delete", role: .destructive) { library.delete(site) }
                             }
                         }
@@ -81,11 +102,18 @@ struct LibraryView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        Button("HTML files or ZIP", systemImage: "doc.badge.plus") {
-                            importFiles = true
+                        Button("Import HTML / ZIP", systemImage: "doc.badge.plus") {
+                            pickerMode = .files
                         }
-                        Button("Website folder", systemImage: "folder.badge.plus") {
-                            importFolder = true
+                        Button("Import website folder", systemImage: "folder.badge.plus") {
+                            pickerMode = .folder
+                        }
+                        Divider()
+                        Button("New HTML page", systemImage: "doc.text") {
+                            showNewHTMLPrompt = true
+                        }
+                        Button("Open custom URL", systemImage: "globe") {
+                            showURLPrompt = true
                         }
                     } label: {
                         Image(systemName: "plus")
@@ -93,21 +121,42 @@ struct LibraryView: View {
                     .disabled(library.isImporting)
                 }
             }
-            .fileImporter(isPresented: $importFiles,
-                          allowedContentTypes: [.html, UTType(filenameExtension: "htm") ?? .html, .zip],
-                          allowsMultipleSelection: true) { result in
-                process(result)
+            .sheet(item: $pickerMode) { mode in
+                DocumentImportPicker(mode: mode) { result in
+                    pickerMode = nil
+                    if let result { process(result) }
+                }
             }
-            .fileImporter(isPresented: $importFolder,
-                          allowedContentTypes: [.folder],
-                          allowsMultipleSelection: true) { result in
-                process(result)
-            }
-            .fullScreenCover(item: $selectedSite) { site in
-                ViewerView(site: site)
+            .sheet(item: $editingSite) { site in
+                HTMLEditorView(site: site)
                     .environmentObject(library)
             }
-            .alert("Import error", isPresented: Binding(
+            .fullScreenCover(item: $destination) { target in
+                switch target {
+                case .site(let site):
+                    ViewerView(site: site).environmentObject(library)
+                case .url(let url):
+                    ViewerView(remoteURL: url).environmentObject(library)
+                }
+            }
+            .alert("Open custom URL", isPresented: $showURLPrompt) {
+                TextField("https://example.com", text: $urlText)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+                Button("Cancel", role: .cancel) {}
+                Button("Open") { openCustomURL() }
+            } message: {
+                Text("Enter an HTTP or HTTPS address. A scheme-free address uses HTTPS.")
+            }
+            .alert("New HTML page", isPresented: $showNewHTMLPrompt) {
+                TextField("Page name", text: $newHTMLName)
+                Button("Cancel", role: .cancel) {}
+                Button("Create") { createHTML() }
+            } message: {
+                Text("Make a new local page you can edit without importing a file.")
+            }
+            .alert("Error", isPresented: Binding(
                 get: { errorMessage != nil },
                 set: { if !$0 { errorMessage = nil } }
             )) {
@@ -115,9 +164,7 @@ struct LibraryView: View {
             } message: {
                 Text(errorMessage ?? "Unknown error")
             }
-            .onOpenURL { url in
-                importSelected([url])
-            }
+            .onOpenURL { url in importSelected([url]) }
         }
     }
 
@@ -132,6 +179,24 @@ struct LibraryView: View {
         Task {
             do { try await library.importURLs(urls) }
             catch { errorMessage = error.localizedDescription }
+        }
+    }
+
+    private func createHTML() {
+        do {
+            let site = try library.createHTML(named: newHTMLName)
+            editingSite = site
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func openCustomURL() {
+        do {
+            let url = try BrowserAddress.parse(urlText)
+            destination = .url(url)
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 }

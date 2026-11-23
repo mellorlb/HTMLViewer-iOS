@@ -52,6 +52,91 @@ final class SiteLibrary: ObservableObject {
         }
     }
 
+    /// Creates a new editable page without using the Files picker.
+    func createHTML(named rawName: String) throws -> Site {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = name.isEmpty ? "Untitled" : name
+        let site = Site(name: title, entryPath: "index.html", port: allocatePort())
+        let directory = folder(for: site)
+        try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+        do {
+            let escapedTitle = title.replacingOccurrences(of: "&", with: "&amp;")
+                .replacingOccurrences(of: "<", with: "&lt;")
+                .replacingOccurrences(of: ">", with: "&gt;")
+                .replacingOccurrences(of: "\"", with: "&quot;")
+            let html = """
+            <!doctype html>
+            <html lang="en">
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <title>\(escapedTitle)</title>
+              <style>body { font: 16px -apple-system, sans-serif; padding: 24px; }</style>
+            </head>
+            <body>
+              <h1>\(escapedTitle)</h1>
+              <p>Tap Edit HTML to change this page.</p>
+            </body>
+            </html>
+            """
+            try html.write(to: directory.appendingPathComponent("index.html"),
+                           atomically: true, encoding: .utf8)
+            sites.insert(site, at: 0)
+            save()
+            return site
+        } catch {
+            try? manager.removeItem(at: directory)
+            throw error
+        }
+    }
+
+    func htmlPaths(for site: Site) throws -> [String] {
+        let root = folder(for: site)
+        guard let enumerator = manager.enumerator(at: root,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]) else {
+            throw ImportFailure.failed("Could not list this site's files.")
+        }
+        var paths: [String] = []
+        for case let url as URL in enumerator {
+            guard ["html", "htm", "xhtml"].contains(url.pathExtension.lowercased()),
+                  (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else {
+                continue
+            }
+            let relative = String(url.path.dropFirst(root.path.count + 1))
+            paths.append(relative)
+        }
+        return paths.sorted(by: { $0.localizedStandardCompare($1) == .orderedAscending })
+    }
+
+    func readHTML(for site: Site, path: String) throws -> String {
+        try String(contentsOf: verifiedHTMLURL(for: site, path: path), encoding: .utf8)
+    }
+
+    func writeHTML(_ text: String, for site: Site, path: String) throws {
+        let url = try verifiedHTMLURL(for: site, path: path)
+        // Atomic replacement leaves a currently streaming request undamaged.
+        try text.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private func verifiedHTMLURL(for site: Site, path: String) throws -> URL {
+        guard sites.contains(where: { $0.id == site.id }),
+              !path.isEmpty, !path.hasPrefix("/"), !path.contains("\\"),
+              path.split(separator: "/").allSatisfy({ $0 != "." && $0 != ".." }),
+              ["html", "htm", "xhtml"].contains((path as NSString).pathExtension.lowercased()) else {
+            throw ImportFailure.failed("Invalid HTML file path.")
+        }
+        let root = folder(for: site).resolvingSymlinksInPath().standardizedFileURL
+        let url = root.appendingPathComponent(path)
+            .resolvingSymlinksInPath().standardizedFileURL
+        guard url.path.hasPrefix(root.path + "/"),
+              manager.fileExists(atPath: url.path),
+              (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else {
+            throw ImportFailure.failed("The HTML file is missing or outside the imported site.")
+        }
+        return url
+    }
+
     func update(_ site: Site) {
         guard let index = sites.firstIndex(where: { $0.id == site.id }) else { return }
         sites[index] = site

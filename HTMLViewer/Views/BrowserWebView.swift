@@ -21,6 +21,7 @@ final class BrowserState: ObservableObject {
     func back() { webView?.goBack() }
     func forward() { webView?.goForward() }
     func reload() { webView?.reload() }
+    func load(_ url: URL) { webView?.load(URLRequest(url: url)) }
 }
 
 struct BrowserWebView: UIViewRepresentable {

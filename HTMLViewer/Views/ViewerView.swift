@@ -9,19 +9,37 @@ struct ViewerView: View {
     @State private var serverError: String?
     @State private var chrome: ChromeMode
     @State private var orientation: SiteOrientation
-    private let site: Site
+    @State private var editHTML = false
+    @State private var showURLPrompt = false
+    @State private var urlText = ""
+    @State private var addressError: String?
+
+    private let site: Site?
+    private let remoteURL: URL?
 
     init(site: Site) {
         self.site = site
+        self.remoteURL = nil
+        _pageURL = State(initialValue: nil)
         _chrome = State(initialValue: site.chrome)
         _orientation = State(initialValue: site.orientation)
     }
 
+    init(remoteURL: URL) {
+        self.site = nil
+        self.remoteURL = remoteURL
+        _pageURL = State(initialValue: remoteURL)
+        _chrome = State(initialValue: .toolbar)
+        _orientation = State(initialValue: .automatic)
+    }
+
+    private var fallbackTitle: String {
+        site?.name ?? remoteURL?.host ?? "Web browser"
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            if chrome == .toolbar {
-                toolbar
-            }
+            if chrome == .toolbar { toolbar }
             ZStack(alignment: .topTrailing) {
                 Color(uiColor: .systemBackground)
                 if let pageURL {
@@ -41,6 +59,8 @@ struct ViewerView: View {
                         Button("Forward", systemImage: "chevron.right") { browser.forward() }
                             .disabled(!browser.canGoForward)
                         Button("Reload", systemImage: "arrow.clockwise") { browser.reload() }
+                        Divider()
+                        viewerActions
                         Divider()
                         preferences
                     } label: {
@@ -69,6 +89,36 @@ struct ViewerView: View {
         .ignoresSafeArea(chrome == .immersive ? .all : [])
         .statusBarHidden(chrome == .immersive)
         .persistentSystemOverlays(chrome == .immersive ? .hidden : .automatic)
+        .sheet(isPresented: $editHTML) {
+            if let site {
+                HTMLEditorView(site: site, onSave: {
+                    // The server reads the updated HTML from disk. Reload only
+                    // when still viewing the local site; preserve remote pages.
+                    if browser.webView?.url?.host == "127.0.0.1" {
+                        browser.reload()
+                    }
+                })
+                .environmentObject(library)
+            }
+        }
+        .alert("Open custom URL", isPresented: $showURLPrompt) {
+            TextField("https://example.com", text: $urlText)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .keyboardType(.URL)
+            Button("Cancel", role: .cancel) {}
+            Button("Go") { goToURL() }
+        } message: {
+            Text("Open an HTTP or HTTPS website in the current viewer.")
+        }
+        .alert("Invalid address", isPresented: Binding(
+            get: { addressError != nil },
+            set: { if !$0 { addressError = nil } }
+        )) {
+            Button("OK", role: .cancel) { addressError = nil }
+        } message: {
+            Text(addressError ?? "Unknown error")
+        }
         .onAppear { startSite() }
         .onDisappear {
             server?.stop()
@@ -84,7 +134,7 @@ struct ViewerView: View {
                     .font(.body.weight(.semibold))
             }
             .accessibilityLabel("Back to library")
-            Text(browser.title.isEmpty ? site.name : browser.title)
+            Text(browser.title.isEmpty ? fallbackTitle : browser.title)
                 .font(.subheadline.weight(.semibold))
                 .lineLimit(1)
             Spacer(minLength: 2)
@@ -99,7 +149,11 @@ struct ViewerView: View {
             Button { browser.reload() } label: {
                 Image(systemName: "arrow.clockwise")
             }
-            Menu { preferences } label: {
+            Menu {
+                viewerActions
+                Divider()
+                preferences
+            } label: {
                 Image(systemName: "gearshape")
             }
         }
@@ -109,6 +163,19 @@ struct ViewerView: View {
         .frame(height: 48)
         .background(.bar)
         .overlay(alignment: .bottom) { Divider() }
+    }
+
+    @ViewBuilder
+    private var viewerActions: some View {
+        if site != nil {
+            Button("Edit HTML code", systemImage: "chevron.left.forwardslash.chevron.right") {
+                editHTML = true
+            }
+        }
+        Button("Open custom URL", systemImage: "globe") {
+            urlText = browser.webView?.url?.absoluteString ?? ""
+            showURLPrompt = true
+        }
     }
 
     @ViewBuilder
@@ -139,8 +206,8 @@ struct ViewerView: View {
     }
 
     private func startSite() {
-        guard server == nil else { return }
         OrientationControl.apply(orientation)
+        guard let site, server == nil else { return }
         let instance = LocalSiteServer(root: library.folder(for: site), port: site.port)
         instance.onReady = {
             var components = URLComponents()
@@ -159,10 +226,23 @@ struct ViewerView: View {
     }
 
     private func savePreferences() {
-        var updated = site
+        guard var updated = site else { return }
         updated.chrome = chrome
         updated.orientation = orientation
         library.update(updated)
+    }
+
+    private func goToURL() {
+        do {
+            let url = try BrowserAddress.parse(urlText)
+            if browser.webView == nil {
+                pageURL = url
+            } else {
+                browser.load(url)
+            }
+        } catch {
+            addressError = error.localizedDescription
+        }
     }
 
     private func close() { dismiss() }

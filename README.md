@@ -2,11 +2,42 @@
 
 A native SwiftUI **local HTML / website viewer** built around WKWebView. Requires **no local Mac** to compile: GitHub Actions runs Xcode on a GitHub-hosted macOS runner and produces an **unsigned IPA**.
 
+## Version 1.1.0: iPhone import fix + editor + URL browser
+
+- Replaced SwiftUI's narrowly filtered `.fileImporter` with a native
+  `UIDocumentPickerViewController`, which accepts any file type from the Files app
+  and validates HTML/ZIP files after selection. This is intended to fix cases
+  where the Files picker’s **Open** button did not complete selection. The
+  actual behavior should still be tested on your iPhone and Files provider.
+- Import one or many HTML files or ZIP archives with **+ > Import HTML / ZIP**.
+  For a website folder, choose **+ > Import website folder**. If an invalid file
+  is selected, the app displays a useful import error instead of silently failing.
+- Long-press an imported entry > **Edit HTML**, or open a page and choose
+  **gear / ellipsis > Edit HTML code**. Switch between HTML entry files in a ZIP
+  or folder using the file menu. Changes save atomically to the app's copy;
+  saving from the viewer reloads the local page. Unsaved changes prompt before
+  switching files or pressing Done. Text is edited as UTF-8 plain text.
+- **+ > New HTML page** creates a working editable page without the file picker.
+- **+ > Open custom URL**, or **gear / ellipsis > Open custom URL** from a viewer.
+  An address without a scheme defaults to `https://`. Remote websites use WKWebView
+  and may have their own login, CORS, SSL and embedded-browser restrictions.
+
+### Updating an existing installation
+
+The app **bundle identifier is unchanged** (`com.htmlviewer.fastviewer`), and
+this update increases the version to `1.1.0` / build `2`. Build and sign the
+new IPA using the **same signing identity / sideloading configuration** to
+attempt an in-place upgrade. **Do not delete the installed app first** if you
+want to preserve your imported sites, localStorage and preferences. Some
+sideloading tools reinstall instead of upgrading; back up anything important
+using Files > On My iPhone > HTML Viewer before updating.
+
 ## Features
 
-- Import multiple `.html`/`.htm` files, ZIP archives, or complete website folders with relative assets.
+- Import multiple `.html`/`.htm`/`.xhtml` files, ZIP archives, or complete website folders with relative assets via the native iOS Files picker.
 - Persist imported files in **Files > On My iPhone > HTML Viewer > HTML Sites** (subject to iOS Files app visibility).
 - Each import is an independent site, with a stable localhost origin/port and persistent `localStorage`, IndexedDB, cookies, and WebKit cache.
+- Open an arbitrary HTTP/HTTPS URL directly in the viewer, or edit imported HTML source.
 - Standard top toolbar, **No top bar**, or **Fullscreen** (no system status bar). The latter two keep a floating ellipsis menu for exit/controls.
 - Per-site **Automatic / Portrait / Landscape** preference; rotate dynamically when the OS permits.
 - Safari/WebKit web runtime: CSS, JS, ES modules, canvas, WebGL, WebAssembly, fetch, WebSockets, multimedia and online requests.
@@ -33,7 +64,7 @@ A native SwiftUI **local HTML / website viewer** built around WKWebView. Require
 4. Open the GitHub repository, select **Actions** > **Build unsigned iOS IPA** > **Run workflow** (or use the automatic run triggered by the push). If prompted, enable Actions for the repository.
 5. Open the successful build run and download **HTMLViewer-unsigned-IPA** under **Artifacts**. GitHub downloads a ZIP containing `HTMLViewer-unsigned.ipa`; **extract the artifact ZIP** to obtain the IPA.
 6. Install the unsigned IPA using a compatible sideloading tool that **signs it for your device** (for example [Sideloadly](https://sideloadly.io/) on Windows, with an Apple ID). A raw unsigned IPA will *not* install directly on a typical unmodified iPhone. Signing methods, Apple account limits, and expiration depend on your tool/account. Free Apple development provisioning often expires after seven days.
-7. In the app, tap **+ > HTML files or ZIP** to import pages or **+ > Website folder** to import a complete folder. Tap a library entry to open; choose display/orientation using the gear/ellipsis menu.
+7. In the app, tap **+ > Import HTML / ZIP** to import pages or **+ > Import website folder** to import a complete folder. Tap a library entry to open; choose display/orientation using the gear/ellipsis menu.
 
 ### Why GitHub Actions uses a Mac
 
@@ -46,6 +77,9 @@ You **personally need no Mac**, but Apple's `xcodebuild` tool runs on a **GitHub
 - Min iOS version: `project.yml` (currently iOS 17.0).
 - Orientation/modes: `HTMLViewer/Models/Site.swift`, `HTMLViewer/Views/ViewerView.swift`.
 - Data/import: `HTMLViewer/Services/SiteLibrary.swift`.
+- Native file picker: `HTMLViewer/Views/DocumentImportPicker.swift`.
+- HTML editor: `HTMLViewer/Views/HTMLEditorView.swift`.
+- Custom URL validation: `HTMLViewer/Models/BrowserAddress.swift`.
 - Web engine: `HTMLViewer/Views/BrowserWebView.swift`.
 - Local HTTP server: `HTMLViewer/Services/LocalSiteServer.swift`.
 - To change code, commit/push: GitHub rebuilds the IPA.
@@ -81,10 +115,10 @@ HTMLViewer-iOS/
 │   ├── HTMLViewerApp.swift
 │   ├── Info.plist
 │   ├── Assets.xcassets/AppIcon.appiconset/
-│   ├── Models/Site.swift
+│   ├── Models/{Site,BrowserAddress}.swift
 │   ├── Services/SiteLibrary.swift
 │   ├── Services/LocalSiteServer.swift
-│   └── Views/{LibraryView,ViewerView,BrowserWebView}.swift
+│   └── Views/{LibraryView,ViewerView,BrowserWebView,DocumentImportPicker,HTMLEditorView}.swift
 ├── project.yml
 ├── sample-site/         (a demonstration web project)
 └── sample-site.zip      (ready to import)
