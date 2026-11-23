@@ -1,5 +1,20 @@
 # Changes
 
+## v1.2.0 — November 22, 2026
+
+- Reworked imported HTML URL/file mapping through a standalone, tested
+  `SitePathResolver`; verifies entry files before a viewer starts and attempts
+  to recover obsolete/missing entry names from a copied site directory.
+- Normalized percent-encoded paths, nested `index.html` routes and diagnostic
+  404 messages; preserved per-site localhost origins for WebKit storage.
+- Added a network-reachable, opt-in HTTP server on a chosen TCP port (1–65535),
+  selectable HTML entry, copy/share URL, and stop control. Servers live at app
+  scope so they can survive closing the viewer while app is foregrounded.
+- Explicit warnings for unauthenticated HTTP access and iOS suspension.
+- Added cross-platform routing smoke tests to GitHub Actions.
+- Version bumped to 1.2.0 (build 3). Actual iOS compilation requires GitHub
+  Actions/macOS; on-device verification remains necessary.
+
 ## v1.1.0 — November 22, 2026
 
 - Native UIKit document picker replaces SwiftUI fileImporter. The file picker now

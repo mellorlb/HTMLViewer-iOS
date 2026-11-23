@@ -2,30 +2,46 @@ import Foundation
 import Network
 import UniformTypeIdentifiers
 
-/// Serves imported sites through a stable 127.0.0.1 HTTP origin. This allows
-/// normal relative URLs, ES modules, fetch(), WASM streaming and Web storage.
-/// A site's stable port is important: localStorage / IndexedDB are origin-scoped.
+/// Internal sites use localhost-only mode and keep stable origin/port for web
+/// storage; opt-in sharing creates a separate listener on a user-selected port.
 final class LocalSiteServer {
+    enum Audience { case localhost, network }
+
     private let root: URL
     private let port: UInt16
-    private let queue = DispatchQueue(label: "HTMLViewer.localHTTP", qos: .userInitiated)
+    private let entryPath: String
+    private let audience: Audience
+    private let queue = DispatchQueue(label: "HTMLViewer.HTTP", qos: .userInitiated)
     private var listener: NWListener?
 
+    /// Invoked on the main queue; the owner must keep this object alive.
     var onReady: (() -> Void)?
     var onError: ((String) -> Void)?
 
-    init(root: URL, port: UInt16) {
+    init(root: URL, port: UInt16, entryPath: String, audience: Audience = .localhost) {
         self.root = root.resolvingSymlinksInPath().standardizedFileURL
         self.port = port
+        self.entryPath = entryPath
+        self.audience = audience
     }
 
     func start() {
-        do {
-            guard let endpointPort = NWEndpoint.Port(rawValue: port) else {
-                onError?("The saved server port is invalid.")
-                return
+        guard SitePathResolver.verifiedEntry(path: entryPath, under: root) != nil else {
+            DispatchQueue.main.async { [weak self] in
+                self?.onError?("The HTML entry file was not found in the imported site. Reimport or edit the site.")
             }
-            let listener = try NWListener(using: .tcp, on: endpointPort)
+            return
+        }
+        guard let endpointPort = NWEndpoint.Port(rawValue: port) else {
+            DispatchQueue.main.async { [weak self] in self?.onError?("Invalid TCP port.") }
+            return
+        }
+        do {
+            let parameters = NWParameters.tcp
+            // Local site origins never accept a connection from another device.
+            // Network mode intentionally binds reachable interfaces.
+            parameters.acceptLocalOnly = (audience == .localhost)
+            let listener = try NWListener(using: parameters, on: endpointPort)
             self.listener = listener
             listener.newConnectionHandler = { [weak self] connection in
                 self?.accept(connection)
@@ -37,12 +53,13 @@ final class LocalSiteServer {
                     DispatchQueue.main.async { self.onReady?() }
                 case .failed(let error):
                     DispatchQueue.main.async { self.onError?(error.localizedDescription) }
+                case .cancelled: break
                 default: break
                 }
             }
             listener.start(queue: queue)
         } catch {
-            onError?(error.localizedDescription)
+            DispatchQueue.main.async { [weak self] in self?.onError?(error.localizedDescription) }
         }
     }
 
@@ -52,18 +69,19 @@ final class LocalSiteServer {
     }
 
     private func accept(_ connection: NWConnection) {
-        // NWListener may bind all interfaces; never expose imported content to LAN peers.
-        guard case let .hostPort(host, _) = connection.endpoint else {
-            connection.cancel()
-            return
+        if audience == .localhost {
+            // Additional defense if the OS does not enforce acceptLocalOnly.
+            guard case let .hostPort(host, _) = connection.endpoint else {
+                connection.cancel()
+                return
+            }
+            let remote = String(describing: host).lowercased()
+            guard ["127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost"].contains(remote) else {
+                connection.cancel()
+                return
+            }
         }
-        let address = String(describing: host).lowercased()
-        guard address == "127.0.0.1" || address == "::1" ||
-              address == "::ffff:127.0.0.1" else {
-            connection.cancel()
-            return
-        }
-        let handler = HTTPClient(connection: connection, root: root)
+        let handler = HTTPClient(connection: connection, root: root, entryPath: entryPath)
         handler.start(on: queue)
     }
 }
@@ -71,13 +89,15 @@ final class LocalSiteServer {
 private final class HTTPClient {
     private let connection: NWConnection
     private let root: URL
+    private let entryPath: String
     private var received = Data()
     private var handle: FileHandle?
     private var bytesRemaining: UInt64 = 0
 
-    init(connection: NWConnection, root: URL) {
+    init(connection: NWConnection, root: URL, entryPath: String) {
         self.connection = connection
         self.root = root
+        self.entryPath = entryPath
     }
 
     func start(on queue: DispatchQueue) {
@@ -87,7 +107,6 @@ private final class HTTPClient {
             case .failed, .cancelled:
                 try? self.handle?.close()
                 self.handle = nil
-                // Release the connection -> handler -> client retain cycle.
                 self.connection.stateUpdateHandler = nil
             default: break
             }
@@ -104,8 +123,7 @@ private final class HTTPClient {
                 return
             }
             if let range = received.range(of: Data("\r\n\r\n".utf8)) {
-                let headers = received.subdata(in: 0..<range.lowerBound)
-                handleRequest(headers)
+                handleRequest(received.subdata(in: 0..<range.lowerBound))
             } else if isComplete || error != nil {
                 connection.cancel()
             } else {
@@ -116,40 +134,37 @@ private final class HTTPClient {
 
     private func handleRequest(_ data: Data) {
         guard let text = String(data: data, encoding: .utf8) else {
-            respond(status: 400, body: "Invalid request")
+            respond(status: 400, body: "Invalid HTTP header encoding")
             return
         }
         let lines = text.components(separatedBy: "\r\n")
         guard let first = lines.first else { respond(status: 400, body: "Bad request"); return }
         let parts = first.split(separator: " ", omittingEmptySubsequences: true)
-        guard parts.count == 3 else { respond(status: 400, body: "Bad request"); return }
+        guard parts.count == 3, parts[2].hasPrefix("HTTP/") else {
+            respond(status: 400, body: "Bad request")
+            return
+        }
         let method = String(parts[0])
         guard method == "GET" || method == "HEAD" else {
             respond(status: 405, body: "Only GET / HEAD are supported")
             return
         }
-        let rawTarget = String(parts[1])
-        guard rawTarget.hasPrefix("/"),
-              let components = URLComponents(string: "http://127.0.0.1" + rawTarget),
-              let decodedPath = components.percentEncodedPath.removingPercentEncoding,
-              !decodedPath.contains("\\"), !decodedPath.contains("\0") else {
-            respond(status: 400, body: "Bad path")
+        let requestTarget = String(parts[1])
+        // Redirect / to the real entry location. The redirect is essential for
+        // relative JS/CSS/images when the entry is in a subfolder of a ZIP.
+        if requestTarget == "/" || requestTarget.hasPrefix("/?") {
+            if let url = SitePathResolver.entryURL(path: entryPath, host: "localhost", port: 1) {
+                redirect(to: url.path(percentEncoded: true))
+            } else {
+                respond(status: 500, body: "Invalid entry path")
+            }
             return
         }
 
-        var file = root.appendingPathComponent(String(decodedPath.dropFirst()))
-            .resolvingSymlinksInPath().standardizedFileURL
-        if isDirectory(file) {
-            let index = ["index.html", "index.htm"].map { file.appendingPathComponent($0) }
-            if let candidate = index.first(where: { FileManager.default.fileExists(atPath: $0.path) }) {
-                file = candidate.resolvingSymlinksInPath().standardizedFileURL
-            }
-        }
-        // Check AFTER resolving paths and symlinks to prevent ZIP-slip/file disclosure.
-        guard file.path.hasPrefix(root.path + "/"),
-              !isDirectory(file),
-              FileManager.default.isReadableFile(atPath: file.path) else {
-            respond(status: 404, body: "File not found")
+        guard let file = SitePathResolver.resolve(target: requestTarget, under: root) else {
+            // Never leak app-container paths into a response. Display the URL
+            // being requested, so missing assets can be diagnosed on-device.
+            respond(status: 404, body: "File not found: \(requestTarget)")
             return
         }
 
@@ -187,8 +202,12 @@ private final class HTTPClient {
                 sendNextChunk()
             }
         } catch {
-            respond(status: 500, body: "Unable to read file")
+            respond(status: 500, body: "Unable to read imported file: \(error.localizedDescription)")
         }
+    }
+
+    private func redirect(to encodedPath: String) {
+        sendHeader(status: 302, extra: ["Location: \(encodedPath)", "Cache-Control: no-cache"], length: 0)
     }
 
     private func sendNextChunk() {
@@ -225,10 +244,6 @@ private final class HTTPClient {
         return (start, min(end, size - 1))
     }
 
-    private func isDirectory(_ url: URL) -> Bool {
-        (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-    }
-
     private func mimeType(_ url: URL) -> String {
         switch url.pathExtension.lowercased() {
         case "html", "htm", "xhtml": return "text/html; charset=utf-8"
@@ -261,6 +276,7 @@ private final class HTTPClient {
         switch status {
         case 200: reason = "OK"
         case 206: reason = "Partial Content"
+        case 302: reason = "Found"
         case 400: reason = "Bad Request"
         case 404: reason = "Not Found"
         case 405: reason = "Method Not Allowed"

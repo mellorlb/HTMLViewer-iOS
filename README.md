@@ -2,6 +2,45 @@
 
 A native SwiftUI **local HTML / website viewer** built around WKWebView. Requires **no local Mac** to compile: GitHub Actions runs Xcode on a GitHub-hosted macOS runner and produces an **unsigned IPA**.
 
+## Version 1.2.0: open imported pages reliably + serve on a chosen HTTP port
+
+- An imported site's entry is checked before opening. Missing/renamed entries
+  are recovered from the imported directory when possible, and a meaningful
+  error appears rather than an unexplained `File not found` page.
+- If a rare HTTP 404 still affects the top-level HTML document, the viewer
+  attempts a direct-file fallback. Plain HTML/CSS can remain viewable;
+  WebAssembly, modules and fetch may be restricted in direct-file mode.
+- A shared, tested URL-to-file resolver now handles spaces, `#`, `%`, Unicode,
+  nested ZIP directories and directory `index.html`, and protects against
+  path traversal/symlink escapes. HTTP 404 responses identify the **requested
+  relative path** for debugging a missing CSS/JS/asset. This is a code-level
+  fix; the original iPhone-only failure was not reproduced in this environment.
+- A **separate opt-in HTTP sharing server** exposes an imported site's selected
+  HTML entry and relative assets to devices on the same reachable network.
+  Long-press a library item > **Serve over HTTP**, swipe it right > **Serve**,
+  or open a page > gear/ellipsis > **Serve over HTTP**.
+- Choose an HTML entry (for sites containing several pages), and enter any
+  available TCP port **1–65535** (default 8080). Tap **Start HTTP server**.
+  Copy or share the displayed URL, e.g. `http://192.168.1.20:8080/index.html`.
+  The app detects your current Wi-Fi IPv4 address and has a Refresh option.
+  Use **Stop HTTP server** to immediately stop sharing.
+- The LAN server is **unauthenticated HTTP**, not HTTPS, and shares the site's
+  included files. Don't serve private projects on untrusted networks. iOS
+  normally suspends apps after backgrounding or locking: **keep the app open
+  in the foreground** while serving. Wi-Fi client isolation and VPN policies
+  may prevent another device from connecting.
+- Existing local site ports are unchanged to preserve per-origin web storage.
+  The network server is separate from the viewer's private localhost server.
+  A TCP port already being used by another service cannot be shared.
+
+### Updating from 1.1.0
+
+This is **v1.2.0 (build 3)** with the same bundle identifier
+`com.htmlviewer.fastviewer`. Build and install as an upgrade using the same
+sideloading identity. **Do not delete the installed app before upgrading**, as
+that may erase imported files and browser storage. Sideloading utilities may
+have their own reinstall/upgrade behavior; export a backup from Files if needed.
+
 ## Version 1.1.0: iPhone import fix + editor + URL browser
 
 - Replaced SwiftUI's narrowly filtered `.fileImporter` with a native
@@ -25,7 +64,7 @@ A native SwiftUI **local HTML / website viewer** built around WKWebView. Require
 ### Updating an existing installation
 
 The app **bundle identifier is unchanged** (`com.htmlviewer.fastviewer`), and
-this update increases the version to `1.1.0` / build `2`. Build and sign the
+version 1.1.0 originally increased the version to build `2`; v1.2.0 is build `3`. Build and sign the
 new IPA using the **same signing identity / sideloading configuration** to
 attempt an in-place upgrade. **Do not delete the installed app first** if you
 want to preserve your imported sites, localStorage and preferences. Some
@@ -82,6 +121,8 @@ You **personally need no Mac**, but Apple's `xcodebuild` tool runs on a **GitHub
 - Custom URL validation: `HTMLViewer/Models/BrowserAddress.swift`.
 - Web engine: `HTMLViewer/Views/BrowserWebView.swift`.
 - Local HTTP server: `HTMLViewer/Services/LocalSiteServer.swift`.
+- Path handling: `HTMLViewer/Services/SitePathResolver.swift` (covered by GitHub Actions tests).
+- LAN sharing: `HTMLViewer/Services/LANShareManager.swift` and `HTMLViewer/Views/ServeSiteSheet.swift`.
 - To change code, commit/push: GitHub rebuilds the IPA.
 
 ### Test website included
@@ -103,7 +144,7 @@ Import `sample-site.zip` into the app (or import the `sample-site` folder). It t
 - Some web apps require a backend server, specific origin, cross-origin headers or HTTPS. A local viewer cannot magically run server-side Node/PHP/Python or bypass remote CORS.
 - Each site's localhost port remains constant so Web storage persists; a rare port collision with another local app may prevent the site from loading until it is assigned another port. Do not casually change a site's port if you need to retain its web-origin storage.
 - Imported JavaScript runs with normal webpage permissions. **Only import content you trust**. Remote scripts may send data to servers, and the app permits HTTP in web content for local-project compatibility.
-- The loopback server serves only files under its site's local directory and rejects non-loopback connections. Navigation to unrelated network addresses is up to WebKit. A stable port is an origin isolation aid, **not** an authentication mechanism or a hardened sandbox for mutually hostile HTML files.
+- The private viewer server is restricted to localhost. The **opt-in LAN server** separately serves only files under the selected imported site directory. Anyone able to connect to the LAN port can download files from that site; there is no password or TLS. A stable internal port is an origin isolation aid, **not** an authentication mechanism.
 - GitHub runners and Apple toolchains change over time. If GitHub replaces its hosted runner image, update `runs-on` and re-run. GitHub Actions billing/quotas depend on your account and repo visibility.
 
 ## Repository layout
@@ -117,8 +158,9 @@ HTMLViewer-iOS/
 │   ├── Assets.xcassets/AppIcon.appiconset/
 │   ├── Models/{Site,BrowserAddress}.swift
 │   ├── Services/SiteLibrary.swift
-│   ├── Services/LocalSiteServer.swift
-│   └── Views/{LibraryView,ViewerView,BrowserWebView,DocumentImportPicker,HTMLEditorView}.swift
+│   ├── Services/{LocalSiteServer,SitePathResolver,LANShareManager}.swift
+│   └── Views/{LibraryView,ViewerView,BrowserWebView,DocumentImportPicker,HTMLEditorView,ServeSiteSheet}.swift
+├── scripts/{verify_project.py,RouteSmokeTest.swift}
 ├── project.yml
 ├── sample-site/         (a demonstration web project)
 └── sample-site.zip      (ready to import)
@@ -130,5 +172,6 @@ HTMLViewer-iOS/
 - **Could not resolve ZIPFoundation:** GitHub's package download/network failed; rerun, or inspect Xcode's package resolver error.
 - **Signing/provisioning error:** Verify that `CODE_SIGNING_ALLOWED=NO` is present and you are building the `iphoneos` destination, not trying to export a signed archive.
 - **Device cannot open IPA:** First sign using your sideloading method. A raw unsigned IPA is only a compiled package.
-- **Website missing assets:** Import the entire folder or ZIP with its CSS/JS/images, not only its top-level HTML.
+- **Website missing assets:** Import the entire folder or ZIP with its CSS/JS/images, not only its top-level HTML. A 404 now shows the exact relative URL that was requested.
+- **HTTP sharing fails:** Try another port (for example 8080 or 9000), keep HTML Viewer foregrounded, ensure both devices are on the same reachable Wi-Fi and allow local-network access if iOS prompts.
 - **WebGPU missing:** Check `navigator.gpu` in `sample-site.zip`; availability is determined by the installed WebKit/OS and device.

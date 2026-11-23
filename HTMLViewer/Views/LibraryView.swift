@@ -14,9 +14,11 @@ private enum ViewerDestination: Identifiable {
 
 struct LibraryView: View {
     @EnvironmentObject private var library: SiteLibrary
+    @EnvironmentObject private var sharing: LANShareManager
     @State private var search = ""
     @State private var destination: ViewerDestination?
     @State private var editingSite: Site?
+    @State private var servingSite: Site?
     @State private var pickerMode: DocumentImportPicker.Mode?
     @State private var showURLPrompt = false
     @State private var urlText = ""
@@ -81,6 +83,10 @@ struct LibraryView: View {
                                 }
                                 .padding(.vertical, 5)
                             }
+                            .swipeActions(edge: .leading) {
+                                Button("Serve", systemImage: "network") { servingSite = site }
+                                    .tint(.blue)
+                            }
                             .contextMenu {
                                 Button("Open", systemImage: "arrow.up.right.square") {
                                     destination = .site(site)
@@ -88,11 +94,14 @@ struct LibraryView: View {
                                 Button("Edit HTML", systemImage: "chevron.left.forwardslash.chevron.right") {
                                     editingSite = site
                                 }
-                                Button("Delete", role: .destructive) { library.delete(site) }
+                                Button("Serve over HTTP", systemImage: "network") {
+                                    servingSite = site
+                                }
+                                Button("Delete", role: .destructive) { delete(site) }
                             }
                         }
                         .onDelete { offsets in
-                            for index in offsets { library.delete(filtered[index]) }
+                            for index in offsets { delete(filtered[index]) }
                         }
                     }
                 }
@@ -130,6 +139,11 @@ struct LibraryView: View {
             .sheet(item: $editingSite) { site in
                 HTMLEditorView(site: site)
                     .environmentObject(library)
+            }
+            .sheet(item: $servingSite) { site in
+                ServeSiteSheet(site: site)
+                    .environmentObject(library)
+                    .environmentObject(sharing)
             }
             .fullScreenCover(item: $destination) { target in
                 switch target {
@@ -180,6 +194,11 @@ struct LibraryView: View {
             do { try await library.importURLs(urls) }
             catch { errorMessage = error.localizedDescription }
         }
+    }
+
+    private func delete(_ site: Site) {
+        sharing.stopIfSharing(site)
+        library.delete(site)
     }
 
     private func createHTML() {

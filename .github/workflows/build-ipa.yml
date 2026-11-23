@@ -27,6 +27,11 @@ jobs:
           test -f project.yml
           test -f HTMLViewer/Assets.xcassets/AppIcon.appiconset/AppIcon.png
 
+      - name: Test safe site path and URL mapping
+        run: |
+          swiftc HTMLViewer/Services/SitePathResolver.swift scripts/RouteSmokeTest.swift -o /tmp/htmlviewer-route-tests
+          /tmp/htmlviewer-route-tests
+
       - name: Install XcodeGen
         run: brew install xcodegen
 

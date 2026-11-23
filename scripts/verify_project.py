@@ -11,6 +11,8 @@ required = [
     'HTMLViewer/HTMLViewerApp.swift', 'HTMLViewer/Models/Site.swift',
     'HTMLViewer/Models/BrowserAddress.swift',
     'HTMLViewer/Services/SiteLibrary.swift', 'HTMLViewer/Services/LocalSiteServer.swift',
+    'HTMLViewer/Services/SitePathResolver.swift', 'HTMLViewer/Services/LANShareManager.swift',
+    'HTMLViewer/Views/ServeSiteSheet.swift', 'scripts/RouteSmokeTest.swift',
     'HTMLViewer/Views/LibraryView.swift', 'HTMLViewer/Views/ViewerView.swift',
     'HTMLViewer/Views/BrowserWebView.swift',
     'HTMLViewer/Views/DocumentImportPicker.swift',
@@ -22,8 +24,8 @@ for path in required:
     assert (root / path).is_file(), f'Missing {path}'
 plist = plistlib.loads((root / 'HTMLViewer/Info.plist').read_bytes())
 assert plist['UIFileSharingEnabled']
-assert plist['CFBundleShortVersionString'] == '1.1.0'
-assert plist['CFBundleVersion'] == '2'
+assert plist['CFBundleShortVersionString'] == '1.2.0'
+assert plist['CFBundleVersion'] == '3'
 assert len(plist['UISupportedInterfaceOrientations']) >= 3
 assets = json.loads((root / 'HTMLViewer/Assets.xcassets/AppIcon.appiconset/Contents.json').read_text())
 assert assets['images'][0]['filename'] == 'AppIcon.png'

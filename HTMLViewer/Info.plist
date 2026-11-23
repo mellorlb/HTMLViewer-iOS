@@ -8,8 +8,8 @@
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>$(PRODUCT_NAME)</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.1.0</string>
-  <key>CFBundleVersion</key><string>2</string>
+  <key>CFBundleShortVersionString</key><string>1.2.0</string>
+  <key>CFBundleVersion</key><string>3</string>
   <key>LSRequiresIPhoneOS</key><true/>
   <key>UIRequiredDeviceCapabilities</key><array><string>arm64</string></array>
   <key>UILaunchScreen</key><dict/>
@@ -30,7 +30,7 @@
   <key>UIFileSharingEnabled</key><true/>
   <key>LSSupportsOpeningDocumentsInPlace</key><true/>
   <key>NSLocalNetworkUsageDescription</key>
-  <string>Imported web pages may connect to servers and WebSockets on your local network.</string>
+  <string>Imported pages may use your local network, and you can choose to serve imported websites to devices on your Wi-Fi.</string>
   <key>NSCameraUsageDescription</key>
   <string>Imported web pages may request access to the camera.</string>
   <key>NSMicrophoneUsageDescription</key>

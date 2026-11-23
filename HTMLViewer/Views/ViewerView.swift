@@ -3,13 +3,16 @@ import SwiftUI
 struct ViewerView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var library: SiteLibrary
+    @EnvironmentObject private var sharing: LANShareManager
     @StateObject private var browser = BrowserState()
     @State private var pageURL: URL?
+    @State private var fallbackFileURL: URL?
     @State private var server: LocalSiteServer?
     @State private var serverError: String?
     @State private var chrome: ChromeMode
     @State private var orientation: SiteOrientation
     @State private var editHTML = false
+    @State private var showServerSheet = false
     @State private var showURLPrompt = false
     @State private var urlText = ""
     @State private var addressError: String?
@@ -43,7 +46,9 @@ struct ViewerView: View {
             ZStack(alignment: .topTrailing) {
                 Color(uiColor: .systemBackground)
                 if let pageURL {
-                    BrowserWebView(url: pageURL, state: browser)
+                    BrowserWebView(url: pageURL, state: browser,
+                                   fallbackFileURL: fallbackFileURL,
+                                   fallbackReadAccessURL: site.map { library.folder(for: $0) })
                 } else if let serverError {
                     ContentUnavailableView("Unable to open site", systemImage: "wifi.exclamationmark",
                                            description: Text(serverError))
@@ -89,6 +94,13 @@ struct ViewerView: View {
         .ignoresSafeArea(chrome == .immersive ? .all : [])
         .statusBarHidden(chrome == .immersive)
         .persistentSystemOverlays(chrome == .immersive ? .hidden : .automatic)
+        .sheet(isPresented: $showServerSheet) {
+            if let site {
+                ServeSiteSheet(site: site)
+                    .environmentObject(library)
+                    .environmentObject(sharing)
+            }
+        }
         .sheet(isPresented: $editHTML) {
             if let site {
                 HTMLEditorView(site: site, onSave: {
@@ -171,6 +183,9 @@ struct ViewerView: View {
             Button("Edit HTML code", systemImage: "chevron.left.forwardslash.chevron.right") {
                 editHTML = true
             }
+            Button("Serve over HTTP", systemImage: "network") {
+                showServerSheet = true
+            }
         }
         Button("Open custom URL", systemImage: "globe") {
             urlText = browser.webView?.url?.absoluteString ?? ""
@@ -208,21 +223,28 @@ struct ViewerView: View {
     private func startSite() {
         OrientationControl.apply(orientation)
         guard let site, server == nil else { return }
-        let instance = LocalSiteServer(root: library.folder(for: site), port: site.port)
-        instance.onReady = {
-            var components = URLComponents()
-            components.scheme = "http"
-            components.host = "127.0.0.1"
-            components.port = Int(site.port)
-            let allowed = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "?#"))
-            components.percentEncodedPath = "/" + site.entryPath.split(separator: "/")
-                .map { String($0).addingPercentEncoding(withAllowedCharacters: allowed) ?? String($0) }
-                .joined(separator: "/")
-            self.pageURL = components.url
+        do {
+            let path = try library.resolvedEntry(for: site)
+            fallbackFileURL = SitePathResolver.verifiedEntry(path: path,
+                                                            under: library.folder(for: site))
+            let instance = LocalSiteServer(root: library.folder(for: site),
+                                           port: site.port, entryPath: path,
+                                           audience: .localhost)
+            instance.onReady = {
+                guard let url = SitePathResolver.entryURL(path: path,
+                                                          host: "127.0.0.1", port: site.port) else {
+                    self.serverError = "The HTML filename cannot be opened as a URL."
+                    return
+                }
+                self.serverError = nil
+                self.pageURL = url
+            }
+            instance.onError = { reason in self.serverError = reason }
+            server = instance
+            instance.start()
+        } catch {
+            serverError = error.localizedDescription
         }
-        instance.onError = { self.serverError = $0 }
-        server = instance
-        instance.start()
     }
 
     private func savePreferences() {

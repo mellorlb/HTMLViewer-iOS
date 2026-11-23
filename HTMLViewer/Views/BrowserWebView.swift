@@ -27,9 +27,13 @@ final class BrowserState: ObservableObject {
 struct BrowserWebView: UIViewRepresentable {
     let url: URL
     @ObservedObject var state: BrowserState
+    var fallbackFileURL: URL? = nil
+    var fallbackReadAccessURL: URL? = nil
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(state: state)
+        Coordinator(state: state, originalURL: url,
+                    fallbackFileURL: fallbackFileURL,
+                    fallbackReadAccessURL: fallbackReadAccessURL)
     }
 
     func makeUIView(context: Context) -> WKWebView {
@@ -60,8 +64,40 @@ struct BrowserWebView: UIViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         private let state: BrowserState
+        private let originalURL: URL
+        private let fallbackFileURL: URL?
+        private let fallbackReadAccessURL: URL?
+        private var hasAttemptedFallback = false
 
-        init(state: BrowserState) { self.state = state }
+        init(state: BrowserState, originalURL: URL,
+             fallbackFileURL: URL?, fallbackReadAccessURL: URL?) {
+            self.state = state
+            self.originalURL = originalURL
+            self.fallbackFileURL = fallbackFileURL
+            self.fallbackReadAccessURL = fallbackReadAccessURL
+        }
+
+        func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
+                     decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+            // Last-resort recovery for a local HTTP 404 on the entry document.
+            // A plain HTML file can still be viewed via file:// even if the
+            // embedded HTTP request fails on a particular device. A site that
+            // relies on fetch(), modules or WASM should use the HTTP origin.
+            if !hasAttemptedFallback, navigationResponse.isForMainFrame,
+               navigationResponse.response.url == originalURL,
+               let http = navigationResponse.response as? HTTPURLResponse,
+               http.statusCode == 404,
+               let fallbackFileURL, let fallbackReadAccessURL,
+               FileManager.default.fileExists(atPath: fallbackFileURL.path) {
+                hasAttemptedFallback = true
+                decisionHandler(.cancel)
+                DispatchQueue.main.async {
+                    webView.loadFileURL(fallbackFileURL, allowingReadAccessTo: fallbackReadAccessURL)
+                }
+                return
+            }
+            decisionHandler(.allow)
+        }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
             state.errorMessage = nil

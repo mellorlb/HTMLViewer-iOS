@@ -28,6 +28,27 @@ final class SiteLibrary: ObservableObject {
         documents.appendingPathComponent(site.id.uuidString, isDirectory: true)
     }
 
+    /// Repair stale entry metadata (e.g. if a Files-provider import changed its
+    /// filename) rather than opening a broken localhost URL.
+    func resolvedEntry(for site: Site) throws -> String {
+        let root = folder(for: site)
+        guard manager.fileExists(atPath: root.path) else {
+            throw ImportFailure.failed("This imported site's folder no longer exists. Please import it again.")
+        }
+        if SitePathResolver.verifiedEntry(path: site.entryPath, under: root) != nil {
+            return site.entryPath
+        }
+        let replacement = try SiteImporter.findEntry(in: root)
+        guard SitePathResolver.verifiedEntry(path: replacement, under: root) != nil else {
+            throw ImportFailure.failed("The imported HTML file is missing. Please import it again.")
+        }
+        if var updated = sites.first(where: { $0.id == site.id }) {
+            updated.entryPath = replacement
+            update(updated)
+        }
+        return replacement
+    }
+
     func importURLs(_ urls: [URL]) async throws {
         guard !urls.isEmpty else { return }
         isImporting = true
@@ -228,7 +249,7 @@ enum SiteImporter {
         }
     }
 
-    private static func findEntry(in folder: URL) throws -> String {
+    static func findEntry(in folder: URL) throws -> String {
         let manager = FileManager.default
         guard let enumerator = manager.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey],
                                                   options: [.skipsHiddenFiles]) else {
@@ -236,7 +257,8 @@ enum SiteImporter {
         }
         var candidates: [String] = []
         for case let candidate as URL in enumerator {
-            guard ["html", "htm", "xhtml"].contains(candidate.pathExtension.lowercased()) else { continue }
+            guard ["html", "htm", "xhtml"].contains(candidate.pathExtension.lowercased()),
+                  (try? candidate.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
             let relative = String(candidate.path.dropFirst(folder.path.count + 1))
             candidates.append(relative)
         }
